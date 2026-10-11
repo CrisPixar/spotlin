@@ -3,7 +3,20 @@ import os
 import hashlib
 import time
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "spotlin.db")
+def load_env():
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    env = {}
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip()
+    return env
+
+ENV_VARS = load_env()
+DB_PATH = ENV_VARS.get("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "data", "spotlin.db"))
 
 def init_db(db_path=None):
     if db_path is None:
@@ -13,7 +26,7 @@ def init_db(db_path=None):
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
     with conn:
-        # Users with roles, bio, avatars, badges
+        # Users
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -30,7 +43,7 @@ def init_db(db_path=None):
             );
         """)
 
-        # Chats (Direct chats for regular users; group allowed only for creator)
+        # Chats
         conn.execute("""
             CREATE TABLE IF NOT EXISTS chats (
                 id TEXT PRIMARY KEY,
@@ -55,7 +68,7 @@ def init_db(db_path=None):
             );
         """)
 
-        # Messages (with E2EE ciphertext, media info)
+        # Messages (with delivery & read status, media info)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY,
@@ -68,6 +81,7 @@ def init_db(db_path=None):
                 media_duration REAL DEFAULT 0,
                 is_pinned INTEGER DEFAULT 0,
                 is_edited INTEGER DEFAULT 0,
+                is_read INTEGER DEFAULT 0,
                 created_at REAL NOT NULL,
                 FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
                 FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
@@ -78,7 +92,7 @@ def init_db(db_path=None):
         conn.execute("""
             CREATE TABLE IF NOT EXISTS school_schedule (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                day_of_week INTEGER NOT NULL, -- 1=Monday, 2=Tuesday, etc.
+                day_of_week INTEGER NOT NULL,
                 lesson_number INTEGER NOT NULL,
                 subject TEXT NOT NULL,
                 time_range TEXT NOT NULL,
@@ -97,9 +111,12 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 def seed_owner(conn):
-    owner_id = "owner_cris_pixar"
-    owner_username = "CrisPixar"
-    owner_pw_hash = hash_password("spotlin_creator_2026")
+    owner_username = ENV_VARS.get("OWNER_USERNAME", "admin")
+    owner_password = ENV_VARS.get("OWNER_PASSWORD", "spotlin_admin_2026")
+    owner_badge = ENV_VARS.get("OWNER_BADGE", "Создатель")
+    owner_id = f"owner_{hashlib.md5(owner_username.encode()).hexdigest()[:8]}"
+    owner_pw_hash = hash_password(owner_password)
+
     with conn:
         conn.execute("""
             INSERT OR IGNORE INTO users (
@@ -108,9 +125,9 @@ def seed_owner(conn):
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             owner_id, owner_username, owner_pw_hash,
-            "Создатель школьного мессенджера Spotlin",
+            f"Главный администратор Spotlin ({owner_username})",
             "/uploads/creator.png",
-            "owner", 1, "Создатель", 1, 1, time.time()
+            "owner", 1, owner_badge, 1, 1, time.time()
         ))
 
 def seed_initial_schedule(conn):
@@ -123,7 +140,7 @@ def seed_initial_schedule(conn):
         (6, "Информатика", "13:30 - 14:15", "Spotlin Android App Development")
     ]
     with conn:
-        for day in range(1, 7): # Monday to Saturday
+        for day in range(1, 7):
             for num, sub, trange, hw in default_lessons:
                 conn.execute("""
                     INSERT OR IGNORE INTO school_schedule (

@@ -2,6 +2,7 @@ package com.spotlin.messenger
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
@@ -26,6 +27,7 @@ import kotlinx.coroutines.launch
 sealed class Screen {
     object Auth : Screen()
     object ChatList : Screen()
+    object NewChatSearch : Screen()
     data class ChatView(val chat: Chat) : Screen()
     data class ChatInfo(val chat: Chat) : Screen()
     object Profile : Screen()
@@ -80,6 +82,19 @@ fun SpotlinApp(
     var authErrorMessage by remember { mutableStateOf<String?>(null) }
     var isLoadingChats by remember { mutableStateOf(false) }
 
+    // Android system Back Button handler: navigate back inside app instead of closing
+    BackHandler(enabled = currentScreen !is Screen.Auth && currentScreen !is Screen.ChatList) {
+        when (val screen = currentScreen) {
+            is Screen.ChatInfo -> currentScreen = Screen.ChatView(screen.chat)
+            is Screen.ChatView -> currentScreen = Screen.ChatList
+            is Screen.NewChatSearch -> currentScreen = Screen.ChatList
+            is Screen.Profile -> currentScreen = Screen.ChatList
+            is Screen.Settings -> currentScreen = Screen.ChatList
+            is Screen.AdminPanel -> currentScreen = Screen.ChatList
+            else -> {}
+        }
+    }
+
     // Helper: refresh chats and users from server
     fun refreshData() {
         coroutineScope.launch {
@@ -105,13 +120,14 @@ fun SpotlinApp(
         }
     }
 
-    // Helper: refresh messages for active chat
+    // Helper: refresh messages for active chat and mark as read
     fun refreshChatMessages(chatId: String) {
         coroutineScope.launch {
             apiClient.getMessages(chatId).onSuccess { fetchedMsgs ->
                 messagesMap = messagesMap.toMutableMap().apply { put(chatId, fetchedMsgs) }
                 SpotlinLogger.d("MainActivity", "Loaded ${fetchedMsgs.size} messages for chat $chatId")
             }
+            apiClient.markChatRead(chatId)
         }
     }
 
@@ -175,6 +191,7 @@ fun SpotlinApp(
                         refreshChatMessages(selectedChat.id)
                         currentScreen = Screen.ChatView(selectedChat)
                     },
+                    onOpenNewChat = { currentScreen = Screen.NewChatSearch },
                     onOpenProfile = { currentScreen = Screen.Profile },
                     onOpenSettings = { currentScreen = Screen.Settings },
                     onOpenAdminPanel = { currentScreen = Screen.AdminPanel },
@@ -187,6 +204,32 @@ fun SpotlinApp(
                                 currentScreen = Screen.ChatView(newChat)
                             }.onFailure { err ->
                                 SpotlinLogger.e("MainActivity", "Failed to create direct chat", err)
+                            }
+                            isLoadingChats = false
+                        }
+                    }
+                )
+            }
+
+            is Screen.NewChatSearch -> {
+                val user = currentUser
+                if (user == null) {
+                    currentScreen = Screen.Auth
+                    return@AnimatedContent
+                }
+                SpotlinNewChatSearchScreen(
+                    currentUser = user,
+                    availableUsers = allUsers,
+                    onBack = { currentScreen = Screen.ChatList },
+                    onSelectUser = { targetUser ->
+                        coroutineScope.launch {
+                            isLoadingChats = true
+                            apiClient.createDirectChat(targetUser.id, targetUser.username).onSuccess { newChat ->
+                                chats = listOf(newChat) + chats.filter { it.id != newChat.id }
+                                refreshChatMessages(newChat.id)
+                                currentScreen = Screen.ChatView(newChat)
+                            }.onFailure { err ->
+                                SpotlinLogger.e("MainActivity", "Failed to create direct chat with ${targetUser.username}", err)
                             }
                             isLoadingChats = false
                         }
@@ -223,6 +266,21 @@ fun SpotlinApp(
                                 }
                             }.onFailure { err ->
                                 SpotlinLogger.e("MainActivity", "Failed to send message", err)
+                            }
+                        }
+                    },
+                    onSendMediaMessage = { mediaUrl, mediaType, caption ->
+                        coroutineScope.launch {
+                            apiClient.sendMessage(
+                                chatId = activeChat.id,
+                                text = caption.ifEmpty { if (mediaType == "audio") "🎤 Голосовое сообщение" else "📎 Медиафайл" },
+                                mediaUrl = mediaUrl,
+                                mediaType = mediaType
+                            ).onSuccess { sentMsg ->
+                                val updated = currentMessages + sentMsg
+                                messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
+                            }.onFailure { err ->
+                                SpotlinLogger.e("MainActivity", "Failed to send media message", err)
                             }
                         }
                     },
@@ -275,7 +333,32 @@ fun SpotlinApp(
                     currentUser = user,
                     members = allUsers.filter { it.id == screen.chat.otherUserId },
                     onBack = { currentScreen = Screen.ChatView(screen.chat) },
-                    onOpenAdminPanel = { currentScreen = Screen.AdminPanel }
+                    onOpenAdminPanel = { currentScreen = Screen.AdminPanel },
+                    onDeleteChat = {
+                        coroutineScope.launch {
+                            apiClient.deleteChat(screen.chat.id).onSuccess {
+                                chats = chats.filter { it.id != screen.chat.id }
+                                messagesMap = messagesMap.toMutableMap().apply { remove(screen.chat.id) }
+                                currentScreen = Screen.ChatList
+                            }.onFailure { err ->
+                                SpotlinLogger.e("MainActivity", "Failed to delete chat", err)
+                            }
+                        }
+                    },
+                    onClearHistory = {
+                        coroutineScope.launch {
+                            apiClient.clearChatHistory(screen.chat.id).onSuccess {
+                                messagesMap = messagesMap.toMutableMap().apply { put(screen.chat.id, emptyList()) }
+                                chats = chats.map { if (it.id == screen.chat.id) it.copy(lastMessage = "") else it }
+                                currentScreen = Screen.ChatView(screen.chat)
+                            }.onFailure { err ->
+                                SpotlinLogger.e("MainActivity", "Failed to clear chat history", err)
+                            }
+                        }
+                    },
+                    onToggleMute = { isMuted ->
+                        chats = chats.map { if (it.id == screen.chat.id) it.copy(isMuted = isMuted) else it }
+                    }
                 )
             }
 
@@ -287,6 +370,7 @@ fun SpotlinApp(
                 }
                 SpotlinProfileScreen(
                     user = user,
+                    apiClient = apiClient,
                     onBack = { currentScreen = Screen.ChatList },
                     onSaveProfile = { newBio, newAvatar ->
                         coroutineScope.launch {

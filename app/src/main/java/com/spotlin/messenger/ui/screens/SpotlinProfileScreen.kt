@@ -1,5 +1,8 @@
 package com.spotlin.messenger.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,22 +17,58 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spotlin.messenger.data.User
+import com.spotlin.messenger.network.SpotlinApiClient
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SpotlinProfileScreen(
     user: User,
+    apiClient: SpotlinApiClient,
     onBack: () -> Unit,
     onSaveProfile: (bio: String, avatarUrl: String) -> Unit,
     onLogout: () -> Unit
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var bio by remember { mutableStateOf(user.bio) }
     var avatarUrl by remember { mutableStateOf(user.avatarUrl) }
     var isEditing by remember { mutableStateOf(false) }
+    var isUploadingAvatar by remember { mutableStateOf(false) }
+    var uploadStatusMessage by remember { mutableStateOf<String?>(null) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            coroutineScope.launch {
+                isUploadingAvatar = true
+                uploadStatusMessage = "Загрузка фото..."
+                try {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        val fileName = "avatar_${System.currentTimeMillis()}.jpg"
+                        apiClient.uploadFile(bytes, fileName, "image/jpeg").onSuccess { uploadedUrl ->
+                            avatarUrl = uploadedUrl
+                            onSaveProfile(bio, uploadedUrl)
+                            uploadStatusMessage = "Фото профиля обновлено!"
+                        }.onFailure { err ->
+                            uploadStatusMessage = "Ошибка загрузки: ${err.message}"
+                        }
+                    }
+                } catch (e: Exception) {
+                    uploadStatusMessage = "Ошибка чтения файла: ${e.message}"
+                } finally {
+                    isUploadingAvatar = false
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -72,10 +111,9 @@ fun SpotlinProfileScreen(
                     .size(110.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primaryContainer)
-                    .clickable(enabled = isEditing) {
-                        // Switch between preset avatars for profile photo
-                        val presets = listOf("/uploads/avatar1.png", "/uploads/avatar2.png", "/uploads/creator.png")
-                        avatarUrl = presets[(presets.indexOf(avatarUrl) + 1).coerceAtLeast(0) % presets.size]
+                    .clickable {
+                        // Directly launch native gallery photo picker
+                        photoPickerLauncher.launch("image/*")
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -85,19 +123,42 @@ fun SpotlinProfileScreen(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
-                if (isEditing) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.35f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.CameraAlt, contentDescription = "Сменить фото", tint = Color.White)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.35f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isUploadingAvatar) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                    } else {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Выбрать из галереи", tint = Color.White)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { photoPickerLauncher.launch("image/*") },
+                shape = RoundedCornerShape(20.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Выбрать из галереи", fontSize = 13.sp)
+            }
+
+            if (uploadStatusMessage != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    uploadStatusMessage!!,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -165,15 +226,6 @@ fun SpotlinProfileScreen(
                             modifier = Modifier.fillMaxWidth(),
                             placeholder = { Text("Расскажите о себе (класс, увлечения)...") },
                             shape = RoundedCornerShape(12.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = avatarUrl,
-                            onValueChange = { avatarUrl = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("Ссылка на фото профиля...") },
-                            shape = RoundedCornerShape(12.dp),
-                            label = { Text("URL фото профиля") }
                         )
                     } else {
                         Text(

@@ -3,7 +3,7 @@ import json
 import uuid
 import time
 from aiohttp import web
-from db import init_db, get_connection, hash_password
+from db import init_db, get_connection, hash_password, ENV_VARS
 from compressor import compress_image, compress_audio, compress_video, UPLOAD_DIR, THUMBNAILS_DIR
 
 @web.middleware
@@ -21,8 +21,6 @@ async def cors_middleware(request, handler):
     return response
 
 routes = web.RouteTableDef()
-
-# In-memory WebSocket connections: user_id -> set(web.WebSocketResponse)
 connected_clients = {}
 
 def get_current_user(request):
@@ -43,14 +41,15 @@ async def register(request):
     bio = data.get("bio", "").strip()
 
     if not username or len(username) < 3 or not password or len(password) < 4:
-        return web.json_response({"error": "Invalid username or password length"}, status=400)
+        return web.json_response({"error": "Логин должен быть от 3 символов, пароль от 4"}, status=400)
 
     user_id = f"user_{uuid.uuid4().hex[:12]}"
     pw_hash = hash_password(password)
 
-    is_creator = 1 if username.lower() == "crispixar" else 0
+    configured_owner = ENV_VARS.get("OWNER_USERNAME", "admin").lower()
+    is_creator = 1 if username.lower() == configured_owner else 0
     role = "owner" if is_creator else "user"
-    custom_badge = "Создатель" if is_creator else ""
+    custom_badge = ENV_VARS.get("OWNER_BADGE", "Создатель") if is_creator else ""
     can_edit = 1 if is_creator else 0
     can_manage = 1 if is_creator else 0
 
@@ -63,7 +62,7 @@ async def register(request):
         conn.commit()
     except Exception:
         conn.close()
-        return web.json_response({"error": "Username already taken"}, status=409)
+        return web.json_response({"error": "Имя пользователя уже занято"}, status=409)
 
     user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     conn.close()
@@ -85,7 +84,7 @@ async def login(request):
     conn.close()
 
     if not user:
-        return web.json_response({"error": "Invalid credentials"}, status=401)
+        return web.json_response({"error": "Неверный логин или пароль"}, status=401)
 
     return web.json_response({
         "token": user["id"],
@@ -126,7 +125,7 @@ async def update_profile(request):
 async def delegate_permissions(request):
     user = get_current_user(request)
     if not user or not user["is_creator"]:
-        return web.json_response({"error": "Forbidden: Owner access required"}, status=403)
+        return web.json_response({"error": "Forbidden: Требуются права создателя"}, status=403)
 
     data = await request.json()
     target_user_id = data.get("user_id")
@@ -157,15 +156,27 @@ async def create_chat(request):
     target_user_id = data.get("target_user_id")
 
     if chat_type != "direct" and not user["is_creator"]:
-        return web.json_response({"error": "Regular users are only allowed direct 1-on-1 chats"}, status=403)
+        return web.json_response({"error": "Обычные пользователи могут писать только тет-а-тет"}, status=403)
 
     if chat_type == "direct" and not target_user_id:
-        return web.json_response({"error": "Target user required for direct chat"}, status=400)
+        return web.json_response({"error": "Не указан собеседник"}, status=400)
+
+    # Check if direct chat already exists
+    conn = get_connection()
+    if chat_type == "direct":
+        existing = conn.execute("""
+            SELECT c.id, c.type, c.title FROM chats c
+            JOIN chat_members cm1 ON c.id = cm1.chat_id AND cm1.user_id = ?
+            JOIN chat_members cm2 ON c.id = cm2.chat_id AND cm2.user_id = ?
+            WHERE c.type = 'direct'
+        """, (user["id"], target_user_id)).fetchone()
+        if existing:
+            conn.close()
+            return web.json_response(dict(existing))
 
     chat_id = f"chat_{uuid.uuid4().hex[:12]}"
     title = data.get("title", "Диалог")
 
-    conn = get_connection()
     conn.execute("""
         INSERT INTO chats (id, type, title, created_by, created_at)
         VALUES (?, ?, ?, ?, ?)
@@ -190,15 +201,47 @@ async def get_chats(request):
     chats = conn.execute("""
         SELECT c.*,
                (SELECT ciphertext FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
-               (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_time
+               (SELECT created_at FROM messages WHERE chat_id = c.id ORDER BY created_at DESC LIMIT 1) as last_time,
+               (SELECT u.id FROM chat_members cm JOIN users u ON cm.user_id = u.id WHERE cm.chat_id = c.id AND cm.user_id != ? LIMIT 1) as other_user_id,
+               (SELECT u.username FROM chat_members cm JOIN users u ON cm.user_id = u.id WHERE cm.chat_id = c.id AND cm.user_id != ? LIMIT 1) as other_username,
+               (SELECT u.custom_badge FROM chat_members cm JOIN users u ON cm.user_id = u.id WHERE cm.chat_id = c.id AND cm.user_id != ? LIMIT 1) as other_badge,
+               (SELECT u.is_creator FROM chat_members cm JOIN users u ON cm.user_id = u.id WHERE cm.chat_id = c.id AND cm.user_id != ? LIMIT 1) as other_is_creator
         FROM chats c
         JOIN chat_members cm ON c.id = cm.chat_id
         WHERE cm.user_id = ?
         ORDER BY last_time DESC
-    """, (user["id"],)).fetchall()
+    """, (user["id"], user["id"], user["id"], user["id"], user["id"])).fetchall()
     conn.close()
 
     return web.json_response([dict(c) for c in chats])
+
+@routes.delete("/api/chats/{chat_id}")
+async def delete_chat(request):
+    user = get_current_user(request)
+    if not user:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    chat_id = request.match_info["chat_id"]
+    conn = get_connection()
+    conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+    conn.execute("DELETE FROM chat_members WHERE chat_id = ?", (chat_id,))
+    conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
+    conn.commit()
+    conn.close()
+    return web.json_response({"success": True, "deleted_chat_id": chat_id})
+
+@routes.delete("/api/chats/{chat_id}/messages")
+async def clear_chat_history(request):
+    user = get_current_user(request)
+    if not user:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    chat_id = request.match_info["chat_id"]
+    conn = get_connection()
+    conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
+    conn.commit()
+    conn.close()
+    return web.json_response({"success": True, "chat_id": chat_id})
 
 @routes.get("/api/chats/{chat_id}/messages")
 async def get_messages(request):
@@ -225,6 +268,19 @@ async def get_messages(request):
 
     return web.json_response([dict(m) for m in messages])
 
+@routes.post("/api/chats/{chat_id}/read")
+async def mark_messages_read(request):
+    user = get_current_user(request)
+    if not user:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    chat_id = request.match_info["chat_id"]
+    conn = get_connection()
+    conn.execute("UPDATE messages SET is_read = 1 WHERE chat_id = ? AND sender_id != ?", (chat_id, user["id"]))
+    conn.commit()
+    conn.close()
+    return web.json_response({"success": True})
+
 @routes.post("/api/chats/{chat_id}/messages")
 async def send_message(request):
     user = get_current_user(request)
@@ -245,8 +301,8 @@ async def send_message(request):
 
     conn = get_connection()
     conn.execute("""
-        INSERT INTO messages (id, chat_id, sender_id, ciphertext, iv, media_url, media_type, media_duration, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO messages (id, chat_id, sender_id, ciphertext, iv, media_url, media_type, media_duration, created_at, is_read)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     """, (msg_id, chat_id, user["id"], ciphertext, iv, media_url, media_type, media_duration, created_at))
     conn.commit()
     conn.close()
@@ -264,6 +320,7 @@ async def send_message(request):
             "iv": iv,
             "media_url": media_url,
             "media_type": media_type,
+            "is_read": False,
             "created_at": created_at
         }
     }
@@ -282,7 +339,7 @@ async def delete_message(request):
     msg = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     if not msg:
         conn.close()
-        return web.json_response({"error": "Message not found"}, status=404)
+        return web.json_response({"error": "Сообщение не найдено"}, status=404)
 
     if not user["is_creator"] and msg["sender_id"] != user["id"] and not user["can_manage_chat"]:
         conn.close()
@@ -309,7 +366,7 @@ async def edit_message(request):
     msg = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     if not msg:
         conn.close()
-        return web.json_response({"error": "Message not found"}, status=404)
+        return web.json_response({"error": "Сообщение не найдено"}, status=404)
 
     if not user["is_creator"] and msg["sender_id"] != user["id"] and not user["can_manage_chat"]:
         conn.close()
@@ -328,14 +385,14 @@ async def pin_message(request):
         return web.json_response({"error": "Unauthorized"}, status=401)
 
     if not user["is_creator"] and not user["can_manage_chat"]:
-        return web.json_response({"error": "Forbidden: Admin or Creator rights required to pin"}, status=403)
+        return web.json_response({"error": "Forbidden: Требуются права модерации"}, status=403)
 
     message_id = request.match_info["message_id"]
     conn = get_connection()
     msg = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     if not msg:
         conn.close()
-        return web.json_response({"error": "Message not found"}, status=404)
+        return web.json_response({"error": "Сообщение не найдено"}, status=404)
 
     new_pin_status = 0 if msg["is_pinned"] else 1
     if new_pin_status == 1:
@@ -358,7 +415,7 @@ async def get_calendar(request):
 async def update_calendar_lesson(request):
     user = get_current_user(request)
     if not user or (not user["is_creator"] and not user["can_edit_calendar"]):
-        return web.json_response({"error": "Forbidden: Requires calendar editing permissions"}, status=403)
+        return web.json_response({"error": "Forbidden: Требуются права редактирования расписания"}, status=403)
 
     lesson_id = request.match_info["lesson_id"]
     data = await request.json()
@@ -385,23 +442,21 @@ async def upload_media(request):
     reader = await request.multipart()
     field = await reader.next()
     if not field:
-        return web.json_response({"error": "No file uploaded"}, status=400)
+        return web.json_response({"error": "Файл не загружен"}, status=400)
 
     filename = field.filename or f"upload_{uuid.uuid4().hex}"
     ext = os.path.splitext(filename)[1].lower()
     raw_path = os.path.join(UPLOAD_DIR, f"raw_{uuid.uuid4().hex}{ext}")
 
-    size = 0
     with open(raw_path, "wb") as f:
         while True:
             chunk = await field.read_chunk()
             if not chunk:
                 break
-            size += len(chunk)
             f.write(chunk)
 
     processed_name = f"{uuid.uuid4().hex}"
-    media_type = "unknown"
+    media_type = "file"
     final_filename = ""
     thumbnail_url = None
 
@@ -424,7 +479,10 @@ async def upload_media(request):
         compress_video(raw_path, final_path, thumbnail_path=thumb_path)
         thumbnail_url = f"/uploads/thumbnails/{thumb_name}"
     else:
-        final_filename = os.path.basename(raw_path)
+        media_type = "file"
+        final_filename = f"{processed_name}_{filename}"
+        final_path = os.path.join(UPLOAD_DIR, final_filename)
+        os.rename(raw_path, final_path)
 
     if os.path.exists(raw_path) and raw_path != os.path.join(UPLOAD_DIR, final_filename):
         try:
@@ -514,4 +572,5 @@ def create_app():
 
 if __name__ == "__main__":
     app = create_app()
-    web.run_app(app, host="0.0.0.0", port=8080)
+    port = int(ENV_VARS.get("SERVER_PORT", 31774))
+    web.run_app(app, host="0.0.0.0", port=port)

@@ -9,6 +9,7 @@ import com.spotlin.messenger.util.SpotlinLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -23,7 +24,7 @@ class SpotlinApiClient(
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
         .apply {
             if (BuildConfig.DEBUG) {
                 val logging = HttpLoggingInterceptor { message ->
@@ -62,7 +63,7 @@ class SpotlinApiClient(
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: ""
             if (!response.isSuccessful) {
-                val err = try { JSONObject(body).optString("error", "Registration error") } catch (_: Exception) { "HTTP ${response.code}" }
+                val err = try { JSONObject(body).optString("error", "Ошибка регистрации") } catch (_: Exception) { "HTTP ${response.code}" }
                 SpotlinLogger.w("SpotlinAuth", "Registration failed: $err")
                 return@withContext Result.failure(Exception(err))
             }
@@ -95,7 +96,7 @@ class SpotlinApiClient(
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: ""
             if (!response.isSuccessful) {
-                val err = try { JSONObject(body).optString("error", "Invalid credentials") } catch (_: Exception) { "HTTP ${response.code}" }
+                val err = try { JSONObject(body).optString("error", "Неверный логин или пароль") } catch (_: Exception) { "HTTP ${response.code}" }
                 SpotlinLogger.w("SpotlinAuth", "Login failed: $err")
                 return@withContext Result.failure(Exception(err))
             }
@@ -268,6 +269,53 @@ class SpotlinApiClient(
         }
     }
 
+    suspend fun deleteChat(chatId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinChat", "Deleting chat $chatId")
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/api/chats/$chatId")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .delete()
+                .build()
+
+            val response = client.newCall(request).execute()
+            Result.success(response.isSuccessful)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun clearChatHistory(chatId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinChat", "Clearing history for chat $chatId")
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/api/chats/$chatId/messages")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .delete()
+                .build()
+
+            val response = client.newCall(request).execute()
+            Result.success(response.isSuccessful)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun markChatRead(chatId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/api/chats/$chatId/read")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .post("{}".toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            Result.success(response.isSuccessful)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun getMessages(chatId: String): Result<List<Message>> = withContext(Dispatchers.IO) {
         SpotlinLogger.d("SpotlinChat", "Fetching messages for chat: $chatId")
         try {
@@ -300,6 +348,7 @@ class SpotlinApiClient(
                         isMine = item.optString("sender_id") == authToken,
                         isPinned = item.optInt("is_pinned", 0) == 1,
                         isEdited = item.optInt("is_edited", 0) == 1,
+                        isRead = item.optInt("is_read", 0) == 1,
                         mediaUrl = if (item.isNull("media_url")) null else item.optString("media_url"),
                         mediaType = if (item.isNull("media_type")) null else item.optString("media_type"),
                         mediaDuration = item.optDouble("media_duration", 0.0).toFloat(),
@@ -347,6 +396,7 @@ class SpotlinApiClient(
                 senderIsCreator = item.optBoolean("sender_is_creator", false),
                 text = item.optString("ciphertext", ""),
                 isMine = true,
+                isRead = false,
                 mediaUrl = if (item.isNull("media_url")) null else item.optString("media_url"),
                 mediaType = if (item.isNull("media_type")) null else item.optString("media_type"),
                 timestamp = (item.optDouble("created_at", 0.0) * 1000).toLong()
@@ -355,6 +405,35 @@ class SpotlinApiClient(
             Result.success(msg)
         } catch (e: Exception) {
             SpotlinLogger.e("SpotlinChat", "SendMessage exception", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun uploadFile(bytes: ByteArray, filename: String, mimeType: String): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinUpload", "Uploading file $filename (${bytes.size} bytes)")
+        try {
+            val mediaType = mimeType.toMediaType()
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", filename, bytes.toRequestBody(mediaType))
+                .build()
+
+            val request = Request.Builder()
+                .url("$baseUrl/api/upload")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .post(requestBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) return@withContext Result.failure(Exception("Upload HTTP ${response.code}"))
+
+            val obj = JSONObject(body)
+            val url = obj.getString("url")
+            val type = obj.optString("media_type", "file")
+            Result.success(Pair(url, type))
+        } catch (e: Exception) {
+            SpotlinLogger.e("SpotlinUpload", "Upload error", e)
             Result.failure(e)
         }
     }
@@ -369,10 +448,8 @@ class SpotlinApiClient(
                 .build()
 
             val response = client.newCall(request).execute()
-            SpotlinLogger.i("SpotlinChat", "DeleteMessage status: ${response.isSuccessful}")
             Result.success(response.isSuccessful)
         } catch (e: Exception) {
-            SpotlinLogger.e("SpotlinChat", "DeleteMessage exception", e)
             Result.failure(e)
         }
     }
@@ -410,10 +487,8 @@ class SpotlinApiClient(
             val body = response.body?.string() ?: ""
             val obj = JSONObject(body)
             val isPinned = obj.optBoolean("is_pinned", false)
-            SpotlinLogger.i("SpotlinChat", "Message $messageId pin state: $isPinned")
             Result.success(isPinned)
         } catch (e: Exception) {
-            SpotlinLogger.e("SpotlinChat", "PinMessage exception", e)
             Result.failure(e)
         }
     }
@@ -429,7 +504,6 @@ class SpotlinApiClient(
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: ""
             if (!response.isSuccessful) {
-                SpotlinLogger.w("SpotlinCalendar", "GetCalendar returned HTTP ${response.code}")
                 return@withContext Result.failure(Exception("HTTP ${response.code}"))
             }
 
@@ -446,10 +520,8 @@ class SpotlinApiClient(
                     )
                 )
             }
-            SpotlinLogger.i("SpotlinCalendar", "Loaded ${list.size} lessons from calendar")
             Result.success(list)
         } catch (e: Exception) {
-            SpotlinLogger.e("SpotlinCalendar", "GetCalendar exception", e)
             Result.failure(e)
         }
     }
@@ -465,10 +537,8 @@ class SpotlinApiClient(
                 .build()
 
             val response = client.newCall(request).execute()
-            SpotlinLogger.i("SpotlinCalendar", "UpdateCalendar status: ${response.isSuccessful}")
             Result.success(response.isSuccessful)
         } catch (e: Exception) {
-            SpotlinLogger.e("SpotlinCalendar", "UpdateCalendar exception", e)
             Result.failure(e)
         }
     }

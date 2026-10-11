@@ -24,7 +24,8 @@ data class Chat(
     val otherIsVerified: Boolean = false,
     val lastMessage: String = "",
     val timestamp: Long = System.currentTimeMillis(),
-    val pinnedMessageId: String? = null
+    val pinnedMessageId: String? = null,
+    val isMuted: Boolean = false
 )
 
 data class Message(
@@ -38,8 +39,9 @@ data class Message(
     val isMine: Boolean,
     var isPinned: Boolean = false,
     var isEdited: Boolean = false,
+    var isRead: Boolean = false,
     val mediaUrl: String? = null,
-    val mediaType: String? = null, // "photo", "audio", "video"
+    val mediaType: String? = null, // "photo", "audio", "video", "file"
     val mediaDuration: Float = 0f,
     val timestamp: Long = System.currentTimeMillis()
 )

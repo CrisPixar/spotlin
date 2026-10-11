@@ -30,6 +30,7 @@ fun SpotlinChatListScreen(
     availableUsers: List<User> = emptyList(),
     isLoadingChats: Boolean = false,
     onSelectChat: (Chat) -> Unit,
+    onOpenNewChat: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAdminPanel: () -> Unit,
@@ -37,7 +38,6 @@ fun SpotlinChatListScreen(
     onRefreshChats: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    var showNewChatDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -98,9 +98,9 @@ fun SpotlinChatListScreen(
             )
         },
         floatingActionButton = {
-            // Regular users write only 1-on-1 (direct messages, NO group creation)
+            // Opens full-screen contact search to start 1-on-1 dialogue
             FloatingActionButton(
-                onClick = { showNewChatDialog = true },
+                onClick = onOpenNewChat,
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 shape = CircleShape
@@ -192,125 +192,6 @@ fun SpotlinChatListScreen(
                 }
             }
         }
-    }
-
-    // New Direct Chat Dialog (User Picker from School Directory)
-    if (showNewChatDialog) {
-        var userFilterQuery by remember { mutableStateOf("") }
-        val otherUsers = remember(availableUsers, currentUser) {
-            availableUsers.filter { it.id != currentUser.id }
-        }
-        val displayedCandidates = remember(otherUsers, userFilterQuery) {
-            if (userFilterQuery.isBlank()) otherUsers
-            else otherUsers.filter {
-                it.username.contains(userFilterQuery, ignoreCase = true) ||
-                it.customBadge.contains(userFilterQuery, ignoreCase = true)
-            }
-        }
-
-        AlertDialog(
-            onDismissRequest = { showNewChatDialog = false },
-            title = {
-                Text("Начать тет-а-тет диалог", fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
-                    Text(
-                        "Выберите школьного собеседника из базы пользователей:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = userFilterQuery,
-                        onValueChange = { userFilterQuery = it },
-                        placeholder = { Text("Поиск пользователя...") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        leadingIcon = { Icon(Icons.Default.PersonSearch, contentDescription = null) },
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    if (displayedCandidates.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
-                            Text("Пользователи не найдены", color = MaterialTheme.colorScheme.outline)
-                        }
-                    } else {
-                        LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                            items(displayedCandidates, key = { it.id }) { targetUser ->
-                                Surface(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            showNewChatDialog = false
-                                            onCreateDirectChat(targetUser)
-                                        },
-                                    color = MaterialTheme.colorScheme.surface
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.primaryContainer),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                targetUser.username.firstOrNull()?.uppercase() ?: "U",
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(targetUser.username, fontWeight = FontWeight.SemiBold)
-                                                if (targetUser.isCreator) {
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("★", color = Color(0xFFFFB300), fontSize = 12.sp)
-                                                } else if (targetUser.customBadge.isNotEmpty()) {
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Surface(
-                                                        shape = RoundedCornerShape(4.dp),
-                                                        color = MaterialTheme.colorScheme.secondaryContainer
-                                                    ) {
-                                                        Text(
-                                                            targetUser.customBadge,
-                                                            fontSize = 9.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            if (targetUser.bio.isNotEmpty()) {
-                                                Text(
-                                                    targetUser.bio,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showNewChatDialog = false }) {
-                    Text("Отмена")
-                }
-            }
-        )
     }
 }
 

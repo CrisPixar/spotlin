@@ -1,6 +1,8 @@
 package com.spotlin.messenger.ui.info
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,11 +31,28 @@ fun SpotlinChatInfoScreen(
     members: List<User> = emptyList(),
     onBack: () -> Unit,
     onOpenAdminPanel: () -> Unit = {},
-    onStartCall: () -> Unit = {}
+    onDeleteChat: () -> Unit = {},
+    onClearHistory: () -> Unit = {},
+    onToggleMute: (Boolean) -> Unit = {}
 ) {
-    var notificationsEnabled by remember { mutableStateOf(true) }
-    var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("Медиа", "Файлы", "Участники")
+    var notificationsEnabled by remember { mutableStateOf(!chat.isMuted) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showClearConfirmDialog by remember { mutableStateOf(false) }
+
+    val isDirect = chat.type == "direct"
+    val tabs = remember(isDirect) {
+        if (isDirect) listOf("Медиа", "Файлы") else listOf("Медиа", "Файлы", "Участники")
+    }
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    val otherUser = remember(members, chat) {
+        members.firstOrNull { it.id == chat.otherUserId } ?: User(
+            id = chat.otherUserId,
+            username = chat.otherUsername,
+            customBadge = chat.otherCustomBadge,
+            isCreator = chat.otherIsCreator
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -49,6 +68,9 @@ fun SpotlinChatInfoScreen(
                         IconButton(onClick = onOpenAdminPanel) {
                             Icon(Icons.Default.Security, contentDescription = "Админ-панель", tint = Color(0xFFFFB300))
                         }
+                    }
+                    IconButton(onClick = { showDeleteConfirmDialog = true }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Удалить чат", tint = MaterialTheme.colorScheme.error)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -73,16 +95,16 @@ fun SpotlinChatInfoScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(100.dp)
+                            .size(110.dp)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.primaryContainer),
                         contentAlignment = Alignment.Center
                     ) {
-                        val initial = (if (chat.type == "direct") chat.otherUsername else chat.title)
+                        val initial = (if (isDirect) chat.otherUsername else chat.title)
                             .firstOrNull()?.uppercase() ?: "S"
                         Text(
                             text = initial,
-                            fontSize = 42.sp,
+                            fontSize = 46.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -95,126 +117,168 @@ fun SpotlinChatInfoScreen(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = if (chat.type == "direct") chat.otherUsername else chat.title,
+                            text = if (isDirect) chat.otherUsername else chat.title,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
                         if (chat.otherIsCreator) {
                             Spacer(modifier = Modifier.width(6.dp))
                             Surface(
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(4.dp),
                                 color = Color(0xFFFFB300)
                             ) {
                                 Text(
-                                    text = "★ Создатель",
-                                    color = Color.Black,
-                                    fontSize = 11.sp,
+                                    "★ Создатель",
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    color = Color.Black,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                                 )
                             }
                         } else if (chat.otherCustomBadge.isNotEmpty()) {
                             Spacer(modifier = Modifier.width(6.dp))
                             Surface(
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(4.dp),
                                 color = MaterialTheme.colorScheme.secondaryContainer
                             ) {
                                 Text(
-                                    text = chat.otherCustomBadge,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    fontSize = 11.sp,
+                                    chat.otherCustomBadge,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                                 )
                             }
                         }
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
+
                     Text(
-                        text = if (chat.type == "direct") "@${chat.otherUsername.lowercase()}" else "Школьный чат",
+                        text = "в сети",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
 
-            // Quick Actions
+            // Quick Info & Settings Section
             item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    FilledTonalButton(onClick = onStartCall) {
-                        Icon(Icons.Default.Call, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Звонок")
-                    }
-                    if (currentUser.isCreator) {
-                        FilledTonalButton(onClick = onOpenAdminPanel) {
-                            Icon(Icons.Default.AdminPanelSettings, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Управление")
-                        }
-                    }
-                }
-            }
-
-            // Settings Section
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
+                        if (otherUser.bio.isNotEmpty()) {
+                            Text(
+                                "О себе",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(otherUser.bio, style = MaterialTheme.typography.bodyMedium)
+                            Spacer(modifier = Modifier.height(14.dp))
+                        }
+
+                        Text(
+                            "Имя пользователя (ID)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("@${chat.otherUsername} (${chat.otherUserId})", style = MaterialTheme.typography.bodyMedium)
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Notifications Row
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Notifications, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text("Уведомления", style = MaterialTheme.typography.bodyLarge)
+                                Icon(
+                                    if (notificationsEnabled) Icons.Default.Notifications else Icons.Default.NotificationsOff,
+                                    contentDescription = null,
+                                    tint = if (notificationsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("Уведомления", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        if (notificationsEnabled) "Включены" else "Выключены",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                             Switch(
                                 checked = notificationsEnabled,
-                                onCheckedChange = { notificationsEnabled = it }
+                                onCheckedChange = {
+                                    notificationsEnabled = it
+                                    onToggleMute(!it)
+                                }
                             )
-                        }
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column {
-                                Text("Сквозное шифрование", style = MaterialTheme.typography.bodyLarge)
-                                Text("AES-256-GCM активно", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
                         }
                     }
                 }
             }
 
-            // Tabs for Media / Members
+            // History & Chat Actions
             item {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showClearConfirmDialog = true }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.CleaningServices, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text("Очистить историю сообщений", fontWeight = FontWeight.Medium)
+                        }
+
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showDeleteConfirmDialog = true }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text("Удалить диалог", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+
+            // Tabs: Media & Files (No "Members" in direct chat!)
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
                 TabRow(
                     selectedTabIndex = selectedTab,
-                    modifier = Modifier.padding(top = 8.dp)
+                    containerColor = MaterialTheme.colorScheme.surface
                 ) {
                     tabs.forEachIndexed { index, title ->
                         Tab(
                             selected = selectedTab == index,
                             onClick = { selectedTab = index },
-                            text = { Text(title) }
+                            text = { Text(title, fontWeight = FontWeight.SemiBold) }
                         )
                     }
                 }
@@ -222,7 +286,7 @@ fun SpotlinChatInfoScreen(
 
             // Tab Content
             when (selectedTab) {
-                0 -> {
+                0 -> { // Медиа
                     item {
                         Box(
                             modifier = Modifier
@@ -230,93 +294,102 @@ fun SpotlinChatInfoScreen(
                                 .padding(32.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Медиафайлов пока нет", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                1 -> {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("Документов пока нет", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                2 -> {
-                    if (members.isEmpty()) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(32.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("1 собеседник в чате", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    } else {
-                        items(members) { member ->
-                            ListItem(
-                                headlineContent = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(member.username, fontWeight = FontWeight.SemiBold)
-                                        if (member.isCreator) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = Color(0xFFFFB300)
-                                            ) {
-                                                Text(
-                                                    "Создатель",
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color.Black,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                )
-                                            }
-                                        } else if (member.customBadge.isNotEmpty()) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = MaterialTheme.colorScheme.secondaryContainer
-                                            ) {
-                                                Text(
-                                                    member.customBadge,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                },
-                                supportingContent = {
-                                    Text(if (member.bio.isNotEmpty()) member.bio else "Ученик")
-                                },
-                                leadingContent = {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primaryContainer),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            member.username.firstOrNull()?.uppercase() ?: "U",
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
+                            Text(
+                                "Нет общих медиафайлов",
+                                color = MaterialTheme.colorScheme.outline,
+                                style = MaterialTheme.typography.bodyMedium
                             )
                         }
                     }
                 }
+                1 -> { // Файлы
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Нет отправленных документов",
+                                color = MaterialTheme.colorScheme.outline,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+                2 -> { // Участники (только если группа)
+                    items(members) { member ->
+                        ListItem(
+                            headlineContent = { Text(member.username, fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text(if (member.bio.isNotEmpty()) member.bio else "Участник") },
+                            leadingContent = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        member.username.firstOrNull()?.uppercase() ?: "U",
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                        )
+                    }
+                }
             }
         }
+    }
+
+    // Delete confirmation dialog
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Удалить диалог?") },
+            text = { Text("Диалог с ${chat.otherUsername} и вся переписка будут безвозвратно удалены.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        onDeleteChat()
+                    }
+                ) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+
+    // Clear history confirmation dialog
+    if (showClearConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirmDialog = false },
+            title = { Text("Очистить историю сообщений?") },
+            text = { Text("Все сообщения в диалоге с ${chat.otherUsername} будут удалены.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearConfirmDialog = false
+                        onClearHistory()
+                    }
+                ) {
+                    Text("Очистить", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirmDialog = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
     }
 }
