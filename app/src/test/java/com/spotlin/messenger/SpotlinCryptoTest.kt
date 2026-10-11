@@ -19,8 +19,7 @@ class SpotlinCryptoTest {
         val payload = SpotlinCryptoEngine.encrypt(plainText, secretKey)
 
         assertNotNull(payload)
-        assertTrue(payload.ciphertext.isNotEmpty())
-        assertTrue(payload.iv.isNotEmpty())
+        assertTrue(payload.isNotEmpty())
 
         val decrypted = SpotlinCryptoEngine.decrypt(payload, secretKey)
         assertEquals(plainText, decrypted)

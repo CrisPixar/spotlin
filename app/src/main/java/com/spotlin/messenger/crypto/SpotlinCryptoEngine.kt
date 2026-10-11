@@ -1,7 +1,7 @@
 package com.spotlin.messenger.crypto
 
-import android.util.Base64
 import java.security.SecureRandom
+import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -32,11 +32,11 @@ object SpotlinCryptoEngine {
         System.arraycopy(iv, 0, combined, 0, iv.size)
         System.arraycopy(ciphertext, 0, combined, iv.size, ciphertext.size)
 
-        return Base64.encodeToString(combined, Base64.NO_WRAP)
+        return Base64.getEncoder().encodeToString(combined)
     }
 
     fun decrypt(encryptedBase64: String, secretKey: SecretKey): String {
-        val combined = Base64.decode(encryptedBase64, Base64.NO_WRAP)
+        val combined = Base64.getDecoder().decode(encryptedBase64)
         if (combined.size < IV_LENGTH_BYTE) throw IllegalArgumentException("Invalid payload size")
 
         val iv = ByteArray(IV_LENGTH_BYTE)
@@ -53,11 +53,11 @@ object SpotlinCryptoEngine {
     }
 
     fun keyFromBase64(keyStr: String): SecretKey {
-        val decoded = Base64.decode(keyStr, Base64.NO_WRAP)
+        val decoded = Base64.getDecoder().decode(keyStr)
         return SecretKeySpec(decoded, ALGORITHM)
     }
 
     fun keyToBase64(key: SecretKey): String {
-        return Base64.encodeToString(key.encoded, Base64.NO_WRAP)
+        return Base64.getEncoder().encodeToString(key.encoded)
     }
 }
