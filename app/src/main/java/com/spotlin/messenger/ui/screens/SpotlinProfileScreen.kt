@@ -53,7 +53,7 @@ fun SpotlinProfileScreen(
                     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                     if (bytes != null && bytes.isNotEmpty()) {
                         val fileName = "avatar_${System.currentTimeMillis()}.jpg"
-                        apiClient.uploadFile(bytes, fileName, "image/jpeg").onSuccess { uploadedUrl ->
+                        apiClient.uploadFile(bytes, fileName, "image/jpeg").onSuccess { (uploadedUrl, _) ->
                             avatarUrl = uploadedUrl
                             onSaveProfile(bio, uploadedUrl)
                             uploadStatusMessage = "Фото профиля обновлено!"

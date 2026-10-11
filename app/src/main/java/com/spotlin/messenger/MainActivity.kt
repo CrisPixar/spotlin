@@ -273,7 +273,7 @@ fun SpotlinApp(
                         coroutineScope.launch {
                             apiClient.sendMessage(
                                 chatId = activeChat.id,
-                                text = caption.ifEmpty { if (mediaType == "audio") "🎤 Голосовое сообщение" else "📎 Медиафайл" },
+                                ciphertext = caption.ifEmpty { if (mediaType == "audio") "🎤 Голосовое сообщение" else "📎 Медиафайл" },
                                 mediaUrl = mediaUrl,
                                 mediaType = mediaType
                             ).onSuccess { sentMsg ->

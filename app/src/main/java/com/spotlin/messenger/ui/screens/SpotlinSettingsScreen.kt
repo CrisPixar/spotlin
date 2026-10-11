@@ -245,7 +245,7 @@ fun SpotlinSettingsScreen(
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "Хост: ${ServerConfig.HARDCODED_SERVER.host}:${ServerConfig.HARDCODED_SERVER.port}",
+                        "URL: ${ServerConfig.HARDCODED_SERVER.httpUrl}",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.outline
                     )
