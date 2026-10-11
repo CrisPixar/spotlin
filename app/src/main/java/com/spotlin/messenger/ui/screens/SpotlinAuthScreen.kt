@@ -7,10 +7,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,13 +23,17 @@ import com.spotlin.messenger.data.ServerConfig
 
 @Composable
 fun SpotlinAuthScreen(
-    onLogin: (username: String, password: String, isRegister: Boolean) -> Unit
+    onLogin: (username: String, password: String, isRegister: Boolean, bio: String) -> Unit,
+    errorMessage: String? = null,
+    isLoading: Boolean = false
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var bio by remember { mutableStateOf("") }
     var isRegister by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var isLoading by remember { mutableStateOf(false) }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    val displayedError = errorMessage ?: localError
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -63,27 +64,27 @@ fun SpotlinAuthScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Spotlin",
+                text = "Spotlin Messenger",
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
 
             Text(
-                text = "Безопасный школьный мессенджер",
+                text = "Реальный школьный мессенджер с защитой данных",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Hardcoded SXT-SV Server Info Badge (No selection)
+            // Hardcoded SXT-SV Server Info Badge
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -94,22 +95,49 @@ fun SpotlinAuthScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Сервер: SXT-SV (f1.rustix.me:31774)",
-                        style = MaterialTheme.typography.labelMedium,
+                        text = "Сервер: SXT-SV (${ServerConfig.DEFAULT_HTTP_URL})",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Mode Toggle (Login vs Register)
+            TabRow(
+                selectedTabIndex = if (isRegister) 1 else 0,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)),
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Tab(
+                    selected = !isRegister,
+                    onClick = {
+                        isRegister = false
+                        localError = null
+                    },
+                    text = { Text("Вход", fontWeight = FontWeight.SemiBold) }
+                )
+                Tab(
+                    selected = isRegister,
+                    onClick = {
+                        isRegister = true
+                        localError = null
+                    },
+                    text = { Text("Регистрация", fontWeight = FontWeight.SemiBold) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             OutlinedTextField(
                 value = username,
                 onValueChange = {
                     username = it
-                    errorMessage = null
+                    localError = null
                 },
-                label = { Text("Имя пользователя / Логин") },
+                label = { Text("Логин / Имя пользователя") },
                 leadingIcon = {
                     Icon(Icons.Default.Person, contentDescription = null)
                 },
@@ -118,13 +146,13 @@ fun SpotlinAuthScreen(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedTextField(
                 value = password,
                 onValueChange = {
                     password = it
-                    errorMessage = null
+                    localError = null
                 },
                 label = { Text("Пароль") },
                 leadingIcon = {
@@ -137,29 +165,69 @@ fun SpotlinAuthScreen(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            if (errorMessage != null) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = errorMessage ?: "",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
+            AnimatedVisibility(visible = isRegister) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = bio,
+                        onValueChange = { bio = it },
+                        label = { Text("О себе (класс, роль в школе)") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Description, contentDescription = null)
+                        },
+                        singleLine = false,
+                        maxLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            if (displayedError != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = displayedError,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             Button(
                 onClick = {
                     if (username.isBlank() || password.isBlank()) {
-                        errorMessage = "Пожалуйста, заполните все поля"
+                        localError = "Пожалуйста, введите логин и пароль"
                         return@Button
                     }
-                    isLoading = true
-                    onLogin(username.trim(), password, isRegister)
+                    if (password.length < 4) {
+                        localError = "Пароль должен содержать минимум 4 символа"
+                        return@Button
+                    }
+                    localError = null
+                    onLogin(username.trim(), password.trim(), isRegister, bio.trim())
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp),
+                    .height(50.dp),
                 shape = RoundedCornerShape(12.dp),
                 enabled = !isLoading
             ) {
@@ -171,25 +239,11 @@ fun SpotlinAuthScreen(
                     )
                 } else {
                     Text(
-                        text = if (isRegister) "Зарегистрироваться" else "Войти",
+                        text = if (isRegister) "Зарегистрироваться" else "Войти в Spotlin",
                         fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.Bold
                     )
                 }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            TextButton(
-                onClick = {
-                    isRegister = !isRegister
-                    errorMessage = null
-                }
-            ) {
-                Text(
-                    text = if (isRegister) "Уже есть аккаунт? Войти" else "Нет аккаунта? Зарегистрироваться",
-                    color = MaterialTheme.colorScheme.primary
-                )
             }
         }
     }

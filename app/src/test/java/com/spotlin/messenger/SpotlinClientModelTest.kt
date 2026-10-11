@@ -74,9 +74,9 @@ class SpotlinClientModelTest {
         val chat = Chat(
             id = "chat_direct_1",
             type = "direct",
-            title = "Мария Ивановна",
-            otherUserId = "maria_ivanovna",
-            otherUsername = "Мария Ивановна",
+            title = "Преподаватель",
+            otherUserId = "teacher_1",
+            otherUsername = "Преподаватель",
             otherCustomBadge = "Учитель",
             lastMessage = "Проверьте календарь"
         )
@@ -86,8 +86,8 @@ class SpotlinClientModelTest {
         val message = Message(
             id = "m1",
             chatId = chat.id,
-            senderId = "maria_ivanovna",
-            senderUsername = "Мария Ивановна",
+            senderId = "teacher_1",
+            senderUsername = "Преподаватель",
             senderBadge = "Учитель",
             text = "Проверьте календарь",
             isMine = false,

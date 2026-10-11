@@ -36,7 +36,7 @@ sealed class Screen {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        SpotlinLogger.i("MainActivity", "Spotlin application started. Debug logging active: ${BuildConfig.DEBUG}")
+        SpotlinLogger.i("MainActivity", "Spotlin messenger starting. Debug logging: ${BuildConfig.DEBUG}")
         setContent {
             var currentThemeMode by remember { mutableStateOf(ThemeMode.MATERIAL_YOU) }
 
@@ -66,180 +66,56 @@ fun SpotlinApp(
     val hardcodedServer = remember { ServerConfig.HARDCODED_SERVER }
     val apiClient = remember { SpotlinApiClient(baseUrl = hardcodedServer.httpUrl) }
 
-    // Current user state (Owner default CrisPixar or authenticated user)
-    var currentUser by remember {
-        mutableStateOf<User?>(
-            User(
-                id = "cris_pixar_owner",
-                username = "CrisPixar",
-                bio = "Создатель и разработчик школьного мессенджера Spotlin",
-                role = "owner",
-                isCreator = true,
-                customBadge = "Создатель",
-                canEditCalendar = true,
-                canManageChat = true,
-                isVerified = true
-            )
-        )
+    // Start with NO mock user - User MUST authenticate on the Auth screen!
+    var currentUser by remember { mutableStateOf<User?>(null) }
+    var currentScreen by remember { mutableStateOf<Screen>(Screen.Auth) }
+
+    // Real server-loaded state (No mocks)
+    var chats by remember { mutableStateOf<List<Chat>>(emptyList()) }
+    var allUsers by remember { mutableStateOf<List<User>>(emptyList()) }
+    var lessons by remember { mutableStateOf<List<SchoolLesson>>(emptyList()) }
+    var messagesMap by remember { mutableStateOf<Map<String, List<Message>>>(emptyMap()) }
+
+    var isAuthLoading by remember { mutableStateOf(false) }
+    var authErrorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoadingChats by remember { mutableStateOf(false) }
+
+    // Helper: refresh chats and users from server
+    fun refreshData() {
+        coroutineScope.launch {
+            isLoadingChats = true
+            apiClient.getChats().onSuccess { fetchedChats ->
+                chats = fetchedChats
+                SpotlinLogger.d("MainActivity", "Successfully loaded ${fetchedChats.size} chats from server")
+            }.onFailure { err ->
+                SpotlinLogger.w("MainActivity", "Failed to fetch chats: ${err.message}")
+            }
+
+            apiClient.getUsers().onSuccess { fetchedUsers ->
+                allUsers = fetchedUsers
+                SpotlinLogger.d("MainActivity", "Successfully loaded ${fetchedUsers.size} users from server")
+            }
+
+            apiClient.getCalendar().onSuccess { fetchedLessons ->
+                lessons = fetchedLessons
+                SpotlinLogger.d("MainActivity", "Successfully loaded ${fetchedLessons.size} lessons from server")
+            }
+
+            isLoadingChats = false
+        }
     }
 
-    // Users in School Directory
-    var allUsers by remember {
-        mutableStateOf(
-            listOf(
-                User(
-                    id = "cris_pixar_owner",
-                    username = "CrisPixar",
-                    bio = "Создатель и разработчик Spotlin",
-                    isCreator = true,
-                    customBadge = "Создатель",
-                    canEditCalendar = true,
-                    canManageChat = true
-                ),
-                User(
-                    id = "maria_ivanovna",
-                    username = "Мария Ивановна",
-                    bio = "Классный руководитель 10-А класса",
-                    customBadge = "Учитель",
-                    canEditCalendar = true,
-                    canManageChat = true
-                ),
-                User(
-                    id = "alex_starosta",
-                    username = "Алексей Смирнов",
-                    bio = "Староста 10-А класса",
-                    customBadge = "Староста",
-                    canEditCalendar = true,
-                    canManageChat = false
-                ),
-                User(
-                    id = "dmitry_student",
-                    username = "Дмитрий Ковалев",
-                    bio = "Ученик 10-А",
-                    customBadge = "",
-                    canEditCalendar = false,
-                    canManageChat = false
-                )
-            )
-        )
+    // Helper: refresh messages for active chat
+    fun refreshChatMessages(chatId: String) {
+        coroutineScope.launch {
+            apiClient.getMessages(chatId).onSuccess { fetchedMsgs ->
+                messagesMap = messagesMap.toMutableMap().apply { put(chatId, fetchedMsgs) }
+                SpotlinLogger.d("MainActivity", "Loaded ${fetchedMsgs.size} messages for chat $chatId")
+            }
+        }
     }
 
-    // Direct chats list (Regular users write 1-on-1 only)
-    var chats by remember {
-        mutableStateOf(
-            listOf(
-                Chat(
-                    id = "chat_1",
-                    type = "direct",
-                    title = "Мария Ивановна",
-                    otherUserId = "maria_ivanovna",
-                    otherUsername = "Мария Ивановна",
-                    otherCustomBadge = "Учитель",
-                    otherIsCreator = false,
-                    lastMessage = "Не забудьте подготовить доклад по физике к четвергу!"
-                ),
-                Chat(
-                    id = "chat_2",
-                    type = "direct",
-                    title = "Алексей Смирнов",
-                    otherUserId = "alex_starosta",
-                    otherUsername = "Алексей Смирнов",
-                    otherCustomBadge = "Староста",
-                    otherIsCreator = false,
-                    lastMessage = "Я обновил домашнее задание в календаре."
-                ),
-                Chat(
-                    id = "chat_3",
-                    type = "direct",
-                    title = "Дмитрий Ковалев",
-                    otherUserId = "dmitry_student",
-                    otherUsername = "Дмитрий Ковалев",
-                    otherCustomBadge = "",
-                    otherIsCreator = false,
-                    lastMessage = "Привет! Скинь номер упражнения по алгебре"
-                )
-            )
-        )
-    }
-
-    // Messages repository per chat
-    var messagesMap by remember {
-        mutableStateOf(
-            mutableMapOf(
-                "chat_1" to listOf(
-                    Message(
-                        id = "m1",
-                        chatId = "chat_1",
-                        senderId = "maria_ivanovna",
-                        senderUsername = "Мария Ивановна",
-                        senderBadge = "Учитель",
-                        text = "Здравствуйте! Напоминаю расписание на завтра.",
-                        isMine = false,
-                        isPinned = true
-                    ),
-                    Message(
-                        id = "m2",
-                        chatId = "chat_1",
-                        senderId = "cris_pixar_owner",
-                        senderUsername = "CrisPixar",
-                        senderBadge = "Создатель",
-                        senderIsCreator = true,
-                        text = "Здравствуйте, Мария Ивановна! Все проверил в календаре.",
-                        isMine = true
-                    ),
-                    Message(
-                        id = "m3",
-                        chatId = "chat_1",
-                        senderId = "maria_ivanovna",
-                        senderUsername = "Мария Ивановна",
-                        senderBadge = "Учитель",
-                        text = "Не забудьте подготовить доклад по физике к четвергу!",
-                        isMine = false
-                    )
-                ),
-                "chat_2" to listOf(
-                    Message(
-                        id = "m2_1",
-                        chatId = "chat_2",
-                        senderId = "alex_starosta",
-                        senderUsername = "Алексей Смирнов",
-                        senderBadge = "Староста",
-                        text = "Я обновил домашнее задание в календаре.",
-                        isMine = false
-                    )
-                ),
-                "chat_3" to listOf(
-                    Message(
-                        id = "m3_1",
-                        chatId = "chat_3",
-                        senderId = "dmitry_student",
-                        senderUsername = "Дмитрий Ковалев",
-                        senderBadge = "",
-                        text = "Привет! Скинь номер упражнения по алгебре",
-                        isMine = false
-                    )
-                )
-            )
-        )
-    }
-
-    // School Schedule
-    var lessons by remember {
-        mutableStateOf(
-            listOf(
-                SchoolLesson(1, "Алгебра", "08:30 - 09:15", "Параграф 14, № 14.5, 14.8"),
-                SchoolLesson(2, "Геометрия", "09:25 - 10:10", "Теорема о трех перпендикулярах, доказательство"),
-                SchoolLesson(3, "Физика", "10:30 - 11:15", "Подготовить доклад: Законы термодинамики"),
-                SchoolLesson(4, "Русский язык", "11:35 - 12:20", "Упражнение 218 (подчеркнуть грамматические основы)"),
-                SchoolLesson(5, "Литература", "12:35 - 13:20", "Читать главы 4-6 романа 'Война и мир'"),
-                SchoolLesson(6, "Информатика", "13:30 - 14:15", "Написать программу в Spotlin Engine")
-            )
-        )
-    }
-
-    var currentScreen by remember { mutableStateOf<Screen>(Screen.ChatList) }
-
-    // Smooth Material transitions for all screens
+    // Animated transitions across all screens
     AnimatedContent(
         targetState = currentScreen,
         transitionSpec = {
@@ -250,29 +126,31 @@ fun SpotlinApp(
     ) { screen ->
         when (screen) {
             is Screen.Auth -> {
-                SpotlinLogger.d("MainActivity", "Navigated to Screen.Auth")
+                SpotlinLogger.d("MainActivity", "Active Screen: Auth (Login/Register)")
                 SpotlinAuthScreen(
-                    onLogin = { userLogin, password, isRegister ->
+                    errorMessage = authErrorMessage,
+                    isLoading = isAuthLoading,
+                    onLogin = { username, password, isRegister, bio ->
+                        isAuthLoading = true
+                        authErrorMessage = null
                         coroutineScope.launch {
                             val result = if (isRegister) {
-                                apiClient.register(userLogin, password)
+                                apiClient.register(username, password, bio)
                             } else {
-                                apiClient.login(userLogin, password)
+                                apiClient.login(username, password)
                             }
-                            result.onSuccess { (_, user) ->
+
+                            result.onSuccess { (token, user) ->
+                                isAuthLoading = false
                                 currentUser = user
+                                SpotlinLogger.i("MainActivity", "User ${user.username} authenticated successfully. Switching to ChatList.")
+                                refreshData()
                                 currentScreen = Screen.ChatList
-                            }.onFailure {
-                                val isOwner = userLogin.equals("CrisPixar", ignoreCase = true)
-                                currentUser = User(
-                                    id = if (isOwner) "cris_pixar_owner" else "user_${System.currentTimeMillis()}",
-                                    username = userLogin,
-                                    isCreator = isOwner,
-                                    customBadge = if (isOwner) "Создатель" else "",
-                                    canEditCalendar = isOwner,
-                                    canManageChat = isOwner
-                                )
-                                currentScreen = Screen.ChatList
+                            }.onFailure { ex ->
+                                isAuthLoading = false
+                                val err = ex.message ?: "Ошибка подключения к серверу SXT-SV (${hardcodedServer.httpUrl})"
+                                authErrorMessage = err
+                                SpotlinLogger.e("MainActivity", "Auth error: $err", ex)
                             }
                         }
                     }
@@ -280,39 +158,49 @@ fun SpotlinApp(
             }
 
             is Screen.ChatList -> {
-                SpotlinLogger.d("MainActivity", "Navigated to Screen.ChatList")
-                val user = currentUser ?: return@AnimatedContent
+                val user = currentUser
+                if (user == null) {
+                    currentScreen = Screen.Auth
+                    return@AnimatedContent
+                }
+                SpotlinLogger.d("MainActivity", "Active Screen: ChatList for ${user.username}")
+
                 SpotlinChatListScreen(
                     currentUser = user,
                     chats = chats,
+                    availableUsers = allUsers,
+                    isLoadingChats = isLoadingChats,
+                    onRefreshChats = { refreshData() },
                     onSelectChat = { selectedChat ->
-                        SpotlinLogger.d("MainActivity", "Selected chat: ${selectedChat.id}")
+                        refreshChatMessages(selectedChat.id)
                         currentScreen = Screen.ChatView(selectedChat)
                     },
                     onOpenProfile = { currentScreen = Screen.Profile },
                     onOpenSettings = { currentScreen = Screen.Settings },
                     onOpenAdminPanel = { currentScreen = Screen.AdminPanel },
-                    onNewDirectChat = {
-                        val newChatId = "chat_${System.currentTimeMillis()}"
-                        val newChat = Chat(
-                            id = newChatId,
-                            type = "direct",
-                            title = "Новый контакт",
-                            otherUserId = "new_contact",
-                            otherUsername = "Новый контакт",
-                            lastMessage = "Диалог создан"
-                        )
-                        chats = listOf(newChat) + chats
-                        messagesMap[newChatId] = emptyList()
-                        currentScreen = Screen.ChatView(newChat)
+                    onCreateDirectChat = { targetUser ->
+                        coroutineScope.launch {
+                            isLoadingChats = true
+                            apiClient.createDirectChat(targetUser.id, targetUser.username).onSuccess { newChat ->
+                                chats = listOf(newChat) + chats
+                                refreshChatMessages(newChat.id)
+                                currentScreen = Screen.ChatView(newChat)
+                            }.onFailure { err ->
+                                SpotlinLogger.e("MainActivity", "Failed to create direct chat", err)
+                            }
+                            isLoadingChats = false
+                        }
                     }
                 )
             }
 
             is Screen.ChatView -> {
-                val user = currentUser ?: return@AnimatedContent
+                val user = currentUser
+                if (user == null) {
+                    currentScreen = Screen.Auth
+                    return@AnimatedContent
+                }
                 val activeChat = screen.chat
-                SpotlinLogger.d("MainActivity", "Navigated to Screen.ChatView for chat ${activeChat.id}")
                 val currentMessages = messagesMap[activeChat.id] ?: emptyList()
 
                 SpotlinChatScreen(
@@ -320,88 +208,106 @@ fun SpotlinApp(
                     currentUser = user,
                     messages = currentMessages,
                     lessons = lessons,
-                    onBack = { currentScreen = Screen.ChatList },
+                    onBack = {
+                        refreshData()
+                        currentScreen = Screen.ChatList
+                    },
                     onOpenInfo = { currentScreen = Screen.ChatInfo(activeChat) },
                     onSendMessage = { text ->
-                        SpotlinLogger.d("MainActivity", "Sending text message to ${activeChat.id}")
-                        val newMsg = Message(
-                            id = "msg_${System.currentTimeMillis()}",
-                            chatId = activeChat.id,
-                            senderId = user.id,
-                            senderUsername = user.username,
-                            senderBadge = user.customBadge,
-                            senderIsCreator = user.isCreator,
-                            text = text,
-                            isMine = true
-                        )
-                        val updated = currentMessages + newMsg
-                        messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
-                        chats = chats.map {
-                            if (it.id == activeChat.id) it.copy(lastMessage = text) else it
+                        coroutineScope.launch {
+                            apiClient.sendMessage(activeChat.id, text).onSuccess { sentMsg ->
+                                val updated = currentMessages + sentMsg
+                                messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
+                                chats = chats.map {
+                                    if (it.id == activeChat.id) it.copy(lastMessage = text) else it
+                                }
+                            }.onFailure { err ->
+                                SpotlinLogger.e("MainActivity", "Failed to send message", err)
+                            }
                         }
                     },
                     onDeleteMessage = { msgToDelete ->
-                        SpotlinLogger.d("MainActivity", "Deleting message ${msgToDelete.id}")
-                        val updated = currentMessages.filter { it.id != msgToDelete.id }
-                        messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
+                        coroutineScope.launch {
+                            apiClient.deleteMessage(msgToDelete.id).onSuccess {
+                                val updated = currentMessages.filter { it.id != msgToDelete.id }
+                                messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
+                            }
+                        }
                     },
                     onPinMessage = { msgToPin ->
-                        SpotlinLogger.d("MainActivity", "Toggling pin on message ${msgToPin.id}")
-                        val updated = currentMessages.map {
-                            if (it.id == msgToPin.id) it.copy(isPinned = !it.isPinned)
-                            else it.copy(isPinned = false)
+                        coroutineScope.launch {
+                            apiClient.pinMessage(msgToPin.id).onSuccess { newPinnedState ->
+                                val updated = currentMessages.map {
+                                    if (it.id == msgToPin.id) it.copy(isPinned = newPinnedState)
+                                    else it.copy(isPinned = false)
+                                }
+                                messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
+                            }
                         }
-                        messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
                     },
                     onEditMessage = { msgToEdit, newText ->
-                        SpotlinLogger.d("MainActivity", "Editing message ${msgToEdit.id}")
-                        val updated = currentMessages.map {
-                            if (it.id == msgToEdit.id) it.copy(text = newText, isEdited = true)
-                            else it
+                        coroutineScope.launch {
+                            apiClient.editMessage(msgToEdit.id, newText).onSuccess {
+                                val updated = currentMessages.map {
+                                    if (it.id == msgToEdit.id) it.copy(text = newText, isEdited = true)
+                                    else it
+                                }
+                                messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
+                            }
                         }
-                        messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
                     },
                     onSaveLesson = { lessonNumber, newHomework ->
-                        SpotlinLogger.d("MainActivity", "Saving lesson $lessonNumber homework: $newHomework")
-                        lessons = lessons.map {
-                            if (it.number == lessonNumber) it.copy(homework = newHomework) else it
+                        coroutineScope.launch {
+                            apiClient.updateCalendarLesson(lessonNumber, newHomework).onSuccess {
+                                lessons = lessons.map {
+                                    if (it.number == lessonNumber) it.copy(homework = newHomework) else it
+                                }
+                            }
                         }
                     }
                 )
             }
 
             is Screen.ChatInfo -> {
-                SpotlinLogger.d("MainActivity", "Navigated to Screen.ChatInfo")
                 val user = currentUser ?: return@AnimatedContent
                 SpotlinChatInfoScreen(
                     chat = screen.chat,
                     currentUser = user,
-                    members = allUsers.filter { it.username == screen.chat.otherUsername },
+                    members = allUsers.filter { it.id == screen.chat.otherUserId },
                     onBack = { currentScreen = Screen.ChatView(screen.chat) },
                     onOpenAdminPanel = { currentScreen = Screen.AdminPanel }
                 )
             }
 
             is Screen.Profile -> {
-                SpotlinLogger.d("MainActivity", "Navigated to Screen.Profile")
-                val user = currentUser ?: return@AnimatedContent
+                val user = currentUser
+                if (user == null) {
+                    currentScreen = Screen.Auth
+                    return@AnimatedContent
+                }
                 SpotlinProfileScreen(
                     user = user,
                     onBack = { currentScreen = Screen.ChatList },
-                    onSaveProfile = { bio, avatar ->
-                        SpotlinLogger.d("MainActivity", "Saving profile bio and avatar")
-                        currentUser = user.copy(bio = bio, avatarUrl = avatar)
+                    onSaveProfile = { newBio, newAvatar ->
+                        coroutineScope.launch {
+                            apiClient.updateProfile(newBio, newAvatar).onSuccess { updatedUser ->
+                                currentUser = updatedUser
+                                SpotlinLogger.i("MainActivity", "Profile updated on server")
+                            }
+                        }
                     },
                     onLogout = {
-                        SpotlinLogger.i("MainActivity", "Logging out user")
+                        SpotlinLogger.i("MainActivity", "User logged out")
+                        apiClient.authToken = null
                         currentUser = null
+                        chats = emptyList()
+                        messagesMap = emptyMap()
                         currentScreen = Screen.Auth
                     }
                 )
             }
 
             is Screen.Settings -> {
-                SpotlinLogger.d("MainActivity", "Navigated to Screen.Settings")
                 SpotlinSettingsScreen(
                     currentTheme = currentThemeMode,
                     onThemeChanged = onThemeChanged,
@@ -410,23 +316,24 @@ fun SpotlinApp(
             }
 
             is Screen.AdminPanel -> {
-                SpotlinLogger.d("MainActivity", "Navigated to Screen.AdminPanel")
-                val user = currentUser ?: return@AnimatedContent
+                val user = currentUser
+                if (user == null || !user.isCreator) {
+                    currentScreen = Screen.ChatList
+                    return@AnimatedContent
+                }
                 SpotlinOwnerAdminScreen(
                     currentUser = user,
                     users = allUsers,
                     onBack = { currentScreen = Screen.ChatList },
                     onUpdateUserBadge = { userId, badge, canEditCalendar, canManageChat ->
-                        SpotlinLogger.i("MainActivity", "Admin updated user $userId badge=$badge calendar=$canEditCalendar chat=$canManageChat")
-                        allUsers = allUsers.map { u ->
-                            if (u.id == userId) u.copy(
-                                customBadge = badge,
-                                canEditCalendar = canEditCalendar,
-                                canManageChat = canManageChat
-                            ) else u
-                        }
-                        chats = chats.map { c ->
-                            if (c.otherUserId == userId) c.copy(otherCustomBadge = badge) else c
+                        coroutineScope.launch {
+                            apiClient.delegateAdminPermissions(userId, badge, canEditCalendar, canManageChat).onSuccess { updatedUser ->
+                                allUsers = allUsers.map { if (it.id == userId) updatedUser else it }
+                                chats = chats.map {
+                                    if (it.otherUserId == userId) it.copy(otherCustomBadge = badge) else it
+                                }
+                                SpotlinLogger.i("MainActivity", "Admin updated permissions on server for $userId")
+                            }
                         }
                     }
                 )

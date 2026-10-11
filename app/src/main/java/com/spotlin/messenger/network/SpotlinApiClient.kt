@@ -9,17 +9,12 @@ import com.spotlin.messenger.util.SpotlinLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 import okhttp3.logging.HttpLoggingInterceptor
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.util.concurrent.TimeUnit
 
 class SpotlinApiClient(
@@ -48,6 +43,8 @@ class SpotlinApiClient(
         baseUrl = url.trimEnd('/')
         SpotlinLogger.d("SpotlinApiClient", "Server URL configured: $baseUrl")
     }
+
+    fun getServerUrl(): String = baseUrl
 
     suspend fun register(username: String, password: String, bio: String = ""): Result<Pair<String, User>> = withContext(Dispatchers.IO) {
         SpotlinLogger.d("SpotlinAuth", "Register request initiated for username: $username")
@@ -116,6 +113,81 @@ class SpotlinApiClient(
         }
     }
 
+    suspend fun getUsers(): Result<List<User>> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinUsers", "Fetching users list from server...")
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/api/users")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) {
+                return@withContext Result.failure(Exception("HTTP ${response.code}"))
+            }
+
+            val array = JSONArray(body)
+            val list = mutableListOf<User>()
+            for (i in 0 until array.length()) {
+                list.add(parseUser(array.getJSONObject(i)))
+            }
+            Result.success(list)
+        } catch (e: Exception) {
+            SpotlinLogger.e("SpotlinUsers", "Error fetching users", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateProfile(bio: String, avatarUrl: String): Result<User> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinProfile", "Updating user profile on server...")
+        try {
+            val json = JSONObject().apply {
+                put("bio", bio)
+                put("avatar_url", avatarUrl)
+            }
+            val request = Request.Builder()
+                .url("$baseUrl/api/users/profile")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .put(json.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) return@withContext Result.failure(Exception("HTTP ${response.code}"))
+
+            Result.success(parseUser(JSONObject(body)))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun delegateAdminPermissions(targetUserId: String, customBadge: String, canEditCalendar: Boolean, canManageChat: Boolean): Result<User> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinAdmin", "Delegating permissions to $targetUserId")
+        try {
+            val json = JSONObject().apply {
+                put("user_id", targetUserId)
+                put("custom_badge", customBadge)
+                put("can_edit_calendar", canEditCalendar)
+                put("can_manage_chat", canManageChat)
+            }
+            val request = Request.Builder()
+                .url("$baseUrl/api/admin/delegate")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .post(json.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) return@withContext Result.failure(Exception("HTTP ${response.code}"))
+
+            Result.success(parseUser(JSONObject(body)))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun getChats(): Result<List<Chat>> = withContext(Dispatchers.IO) {
         SpotlinLogger.d("SpotlinChat", "Fetching chats list from server...")
         try {
@@ -154,6 +226,44 @@ class SpotlinApiClient(
             Result.success(list)
         } catch (e: Exception) {
             SpotlinLogger.e("SpotlinChat", "Error getting chats", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun createDirectChat(targetUserId: String, title: String = "Диалог"): Result<Chat> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinChat", "Creating direct chat with target: $targetUserId")
+        try {
+            val json = JSONObject().apply {
+                put("type", "direct")
+                put("target_user_id", targetUserId)
+                put("title", title)
+            }
+            val request = Request.Builder()
+                .url("$baseUrl/api/chats")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .post(json.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) {
+                val err = try { JSONObject(body).optString("error", "Failed to create chat") } catch (_: Exception) { "HTTP ${response.code}" }
+                return@withContext Result.failure(Exception(err))
+            }
+
+            val obj = JSONObject(body)
+            Result.success(
+                Chat(
+                    id = obj.getString("id"),
+                    type = obj.optString("type", "direct"),
+                    title = obj.optString("title", title),
+                    otherUserId = targetUserId,
+                    otherUsername = title,
+                    lastMessage = "Диалог создан"
+                )
+            )
+        } catch (e: Exception) {
+            SpotlinLogger.e("SpotlinChat", "Error creating direct chat", e)
             Result.failure(e)
         }
     }
@@ -267,6 +377,26 @@ class SpotlinApiClient(
         }
     }
 
+    suspend fun editMessage(messageId: String, newText: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinChat", "Editing message $messageId")
+        try {
+            val json = JSONObject().apply {
+                put("ciphertext", newText)
+                put("iv", "")
+            }
+            val request = Request.Builder()
+                .url("$baseUrl/api/messages/$messageId")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .put(json.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            Result.success(response.isSuccessful)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun pinMessage(messageId: String): Result<Boolean> = withContext(Dispatchers.IO) {
         SpotlinLogger.d("SpotlinChat", "Toggling pin on message $messageId")
         try {
@@ -350,10 +480,10 @@ class SpotlinApiClient(
             bio = obj.optString("bio", ""),
             avatarUrl = obj.optString("avatar_url", ""),
             role = obj.optString("role", "user"),
-            isCreator = obj.optInt("is_creator", 0) == 1,
+            isCreator = obj.optInt("is_creator", 0) == 1 || obj.optBoolean("is_creator", false),
             customBadge = obj.optString("custom_badge", ""),
-            canEditCalendar = obj.optInt("can_edit_calendar", 0) == 1,
-            canManageChat = obj.optInt("can_manage_chat", 0) == 1
+            canEditCalendar = obj.optInt("can_edit_calendar", 0) == 1 || obj.optBoolean("can_edit_calendar", false),
+            canManageChat = obj.optInt("can_manage_chat", 0) == 1 || obj.optBoolean("can_manage_chat", false)
         )
     }
 }

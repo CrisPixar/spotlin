@@ -327,6 +327,8 @@ fun SpotlinChatScreen(
         SpotlinCalendarDialog(
             chatId = chat.id,
             canEdit = hasAdminPowers,
+            lessons = lessons,
+            onSaveLesson = onSaveLesson,
             onDismiss = { showCalendar = false }
         )
     }

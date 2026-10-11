@@ -27,13 +27,17 @@ import com.spotlin.messenger.data.User
 fun SpotlinChatListScreen(
     currentUser: User,
     chats: List<Chat>,
+    availableUsers: List<User> = emptyList(),
+    isLoadingChats: Boolean = false,
     onSelectChat: (Chat) -> Unit,
     onOpenProfile: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAdminPanel: () -> Unit,
-    onNewDirectChat: () -> Unit
+    onCreateDirectChat: (targetUser: User) -> Unit,
+    onRefreshChats: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var showNewChatDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -73,7 +77,9 @@ fun SpotlinChatListScreen(
                     }
                 },
                 actions = {
-                    // Hidden admin panel: Only shown for Owner (isCreator)
+                    IconButton(onClick = onRefreshChats) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Обновить чаты")
+                    }
                     if (currentUser.isCreator) {
                         IconButton(onClick = onOpenAdminPanel) {
                             Icon(Icons.Default.Security, contentDescription = "Панель Создателя", tint = Color(0xFFFFB300))
@@ -92,14 +98,14 @@ fun SpotlinChatListScreen(
             )
         },
         floatingActionButton = {
-            // Regular users write 1-on-1 (direct messages only, NO group creation)
+            // Regular users write only 1-on-1 (direct messages, NO group creation)
             FloatingActionButton(
-                onClick = onNewDirectChat,
+                onClick = { showNewChatDialog = true },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 shape = CircleShape
             ) {
-                Icon(Icons.Default.Edit, contentDescription = "Новый диалог")
+                Icon(Icons.Default.Edit, contentDescription = "Начать диалог")
             }
         }
     ) { padding ->
@@ -112,7 +118,7 @@ fun SpotlinChatListScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("Поиск диалогов или учителей...") },
+                placeholder = { Text("Поиск диалогов...") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -134,12 +140,19 @@ fun SpotlinChatListScreen(
                 }
             }
 
-            if (filteredChats.isEmpty()) {
+            if (isLoadingChats) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (filteredChats.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(32.dp)
+                    ) {
                         Icon(
                             Icons.Default.ChatBubbleOutline,
                             contentDescription = null,
@@ -148,9 +161,16 @@ fun SpotlinChatListScreen(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "Нет активных сообщений",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.outline
+                            text = "У вас пока нет активных диалогов",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Нажмите на кнопку карандаша ниже, чтобы выбрать собеседника и начать переписку тет-а-тет.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -172,6 +192,125 @@ fun SpotlinChatListScreen(
                 }
             }
         }
+    }
+
+    // New Direct Chat Dialog (User Picker from School Directory)
+    if (showNewChatDialog) {
+        var userFilterQuery by remember { mutableStateOf("") }
+        val otherUsers = remember(availableUsers, currentUser) {
+            availableUsers.filter { it.id != currentUser.id }
+        }
+        val displayedCandidates = remember(otherUsers, userFilterQuery) {
+            if (userFilterQuery.isBlank()) otherUsers
+            else otherUsers.filter {
+                it.username.contains(userFilterQuery, ignoreCase = true) ||
+                it.customBadge.contains(userFilterQuery, ignoreCase = true)
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { showNewChatDialog = false },
+            title = {
+                Text("Начать тет-а-тет диалог", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
+                    Text(
+                        "Выберите школьного собеседника из базы пользователей:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = userFilterQuery,
+                        onValueChange = { userFilterQuery = it },
+                        placeholder = { Text("Поиск пользователя...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.PersonSearch, contentDescription = null) },
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (displayedCandidates.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                            Text("Пользователи не найдены", color = MaterialTheme.colorScheme.outline)
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                            items(displayedCandidates, key = { it.id }) { targetUser ->
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            showNewChatDialog = false
+                                            onCreateDirectChat(targetUser)
+                                        },
+                                    color = MaterialTheme.colorScheme.surface
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primaryContainer),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                targetUser.username.firstOrNull()?.uppercase() ?: "U",
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(targetUser.username, fontWeight = FontWeight.SemiBold)
+                                                if (targetUser.isCreator) {
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("★", color = Color(0xFFFFB300), fontSize = 12.sp)
+                                                } else if (targetUser.customBadge.isNotEmpty()) {
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = MaterialTheme.colorScheme.secondaryContainer
+                                                    ) {
+                                                        Text(
+                                                            targetUser.customBadge,
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            if (targetUser.bio.isNotEmpty()) {
+                                                Text(
+                                                    targetUser.bio,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showNewChatDialog = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
     }
 }
 
@@ -258,7 +397,7 @@ private fun ChatItemRow(
                     }
 
                     Text(
-                        text = "12:45",
+                        text = "сейчас",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline
                     )
