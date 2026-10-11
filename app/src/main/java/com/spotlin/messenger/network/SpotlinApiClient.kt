@@ -269,6 +269,41 @@ class SpotlinApiClient(
         }
     }
 
+    suspend fun createGroupChat(title: String): Result<Chat> = withContext(Dispatchers.IO) {
+        SpotlinLogger.d("SpotlinChat", "Creating group chat with title: $title")
+        try {
+            val json = JSONObject().apply {
+                put("type", "group")
+                put("title", title)
+            }
+            val request = Request.Builder()
+                .url("$baseUrl/api/chats")
+                .header("Authorization", "Bearer ${authToken ?: ""}")
+                .post(json.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) {
+                val err = try { JSONObject(body).optString("error", "Failed to create group") } catch (_: Exception) { "HTTP ${response.code}" }
+                return@withContext Result.failure(Exception(err))
+            }
+
+            val obj = JSONObject(body)
+            Result.success(
+                Chat(
+                    id = obj.getString("id"),
+                    type = "group",
+                    title = obj.optString("title", title),
+                    lastMessage = "Группа создана"
+                )
+            )
+        } catch (e: Exception) {
+            SpotlinLogger.e("SpotlinChat", "Error creating group chat", e)
+            Result.failure(e)
+        }
+    }
+
     suspend fun deleteChat(chatId: String): Result<Boolean> = withContext(Dispatchers.IO) {
         SpotlinLogger.d("SpotlinChat", "Deleting chat $chatId")
         try {

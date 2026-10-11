@@ -1,55 +1,22 @@
 package com.spotlin.messenger.ui.calendar
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.School
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,16 +26,22 @@ import com.spotlin.messenger.data.SchoolLesson
 import kotlinx.coroutines.delay
 import java.util.Calendar
 
+/**
+ * Interactive School Calendar:
+ * - Functional day selector (Monday to Saturday)
+ * - Display of current day, lessons schedule, bell timings and homework
+ * - Administrative configuration of lesson times globally for all days or manual override
+ * - Editing subject name, class tag (e.g. 10-А), and homework saving to server
+ */
 @Composable
 fun SpotlinCalendarDialog(
     chatId: String,
-    canEdit: Boolean,
+    canEdit: Boolean, // True for Admins/Creator or delegated users
     lessons: List<SchoolLesson> = emptyList(),
-    onSaveLesson: ((Int, String) -> Unit)? = null,
+    onSaveLesson: ((number: Int, subject: String, time: String, homework: String, schoolClass: String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     var isLoading by remember { mutableStateOf(true) }
-    var isEditing by remember { mutableStateOf(false) }
 
     val daysOfWeek = remember { listOf("Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота") }
     val currentDayIndex = remember {
@@ -85,30 +58,36 @@ fun SpotlinCalendarDialog(
     }
     var selectedDayIndex by remember { mutableIntStateOf(currentDayIndex) }
 
+    // Schedule map per day
     val scheduleState = remember(lessons) {
         val map = mutableStateMapOf<String, MutableList<SchoolLesson>>()
-        val baseLessons = if (lessons.isNotEmpty()) lessons else listOf(
-            SchoolLesson(1, "Алгебра", "08:30 - 09:15", "Параграф 14, № 14.5, 14.8"),
-            SchoolLesson(2, "Геометрия", "09:25 - 10:10", "Теорема о трех перпендикулярах"),
-            SchoolLesson(3, "Физика", "10:30 - 11:15", "Доклад: Законы термодинамики"),
-            SchoolLesson(4, "Русский язык", "11:35 - 12:20", "Упражнение 218"),
-            SchoolLesson(5, "Литература", "12:35 - 13:20", "Война и мир (тома 1-2)"),
-            SchoolLesson(6, "Информатика", "13:30 - 14:15", "Spotlin Android App")
+        val defaultLessons = if (lessons.isNotEmpty()) lessons else listOf(
+            SchoolLesson(1, "Алгебра", "08:30 - 09:15", "Параграф 14, № 14.5, 14.8", "10-А"),
+            SchoolLesson(2, "Геометрия", "09:25 - 10:10", "Теорема о трех перпендикулярах", "10-А"),
+            SchoolLesson(3, "Физика", "10:30 - 11:15", "Доклад: Законы термодинамики", "10-А"),
+            SchoolLesson(4, "Русский язык", "11:35 - 12:20", "Упражнение 218", "10-А"),
+            SchoolLesson(5, "Литература", "12:35 - 13:20", "Война и мир (тома 1-2)", "10-А"),
+            SchoolLesson(6, "Информатика", "13:30 - 14:15", "Spotlin Android App", "10-А")
         )
 
         for (day in daysOfWeek) {
-            map[day] = baseLessons.map { it.copy() }.toMutableList()
+            map[day] = defaultLessons.map { it.copy() }.toMutableList()
         }
         map
     }
 
     LaunchedEffect(Unit) {
-        delay(400)
+        delay(350)
         isLoading = false
     }
 
-    var editingLesson by remember { mutableStateOf<Pair<Int, SchoolLesson>?>(null) }
-    var newHomeworkText by remember { mutableStateOf("") }
+    // Dialog state for editing a lesson
+    var editingLesson by remember { mutableStateOf<SchoolLesson?>(null) }
+    var editSubject by remember { mutableStateOf("") }
+    var editTime by remember { mutableStateOf("") }
+    var editHomework by remember { mutableStateOf("") }
+    var editSchoolClass by remember { mutableStateOf("") }
+    var applyToAllDays by remember { mutableStateOf(true) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -171,32 +150,49 @@ fun SpotlinCalendarDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Days of week selector
+                // Days of week selector (Requirement 16: fully working buttons)
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     itemsIndexed(daysOfWeek) { index, day ->
                         val isSelected = index == selectedDayIndex
+                        val isToday = index == currentDayIndex
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else if (isToday) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier.clickable { selectedDayIndex = index }
                         ) {
-                            Text(
-                                text = day,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            Row(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                fontSize = 13.sp
-                            )
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = day,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                                    else if (isToday) MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 13.sp
+                                )
+                                if (isToday && !isSelected) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Content: Loading animation or Lessons list
                 if (isLoading) {
                     Box(
                         modifier = Modifier
@@ -206,16 +202,12 @@ fun SpotlinCalendarDialog(
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(48.dp),
+                                modifier = Modifier.size(44.dp),
                                 strokeWidth = 3.dp,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                "Загрузка расписания уроков...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text("Синхронизация расписания...", color = MaterialTheme.colorScheme.outline)
                         }
                     }
                 } else {
@@ -228,7 +220,7 @@ fun SpotlinCalendarDialog(
                             .fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        itemsIndexed(currentLessons) { idx, lesson ->
+                        itemsIndexed(currentLessons) { _, lesson ->
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(16.dp),
@@ -252,62 +244,77 @@ fun SpotlinCalendarDialog(
                                                     Text(
                                                         "${lesson.number}",
                                                         fontWeight = FontWeight.Bold,
-                                                        fontSize = 12.sp,
-                                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                        fontSize = 13.sp
                                                     )
                                                 }
                                             }
                                             Spacer(modifier = Modifier.width(10.dp))
-                                            Text(
-                                                lesson.subject,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 16.sp,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        lesson.subject,
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = MaterialTheme.colorScheme.secondaryContainer
+                                                    ) {
+                                                        Text(
+                                                            lesson.schoolClass,
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    lesson.time,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
                                         }
 
-                                        Text(
-                                            lesson.time,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
+                                        // Edit button visible only for Admins / Users with canEdit rights
+                                        if (canEdit) {
+                                            IconButton(
+                                                onClick = {
+                                                    editingLesson = lesson
+                                                    editSubject = lesson.subject
+                                                    editTime = lesson.time
+                                                    editHomework = lesson.homework
+                                                    editSchoolClass = lesson.schoolClass
+                                                }
+                                            ) {
+                                                Icon(Icons.Default.Edit, contentDescription = "Редактировать урок", tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
                                     }
 
                                     Spacer(modifier = Modifier.height(8.dp))
 
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.Top
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Icon(
-                                            Icons.Default.Book,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.outline,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (lesson.homework.isNotEmpty()) "ДЗ: ${lesson.homework}" else "ДЗ не задано",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (lesson.homework.isNotEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline,
-                                            modifier = Modifier.weight(1f)
-                                        )
-
-                                        if (canEdit) {
-                                            IconButton(
-                                                onClick = {
-                                                    editingLesson = Pair(idx, lesson)
-                                                    newHomeworkText = lesson.homework
-                                                },
-                                                modifier = Modifier.size(24.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Edit,
-                                                    contentDescription = "Изменить ДЗ",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text(
+                                                "Домашнее задание:",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                if (lesson.homework.isNotEmpty()) lesson.homework else "Не задано",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
                                         }
                                     }
                                 }
@@ -315,72 +322,80 @@ fun SpotlinCalendarDialog(
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Footer Actions
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (canEdit) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer
-                        ) {
-                            Text(
-                                "Права администратора активны",
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    } else {
-                        Text(
-                            "Только просмотр (изменять могут учителя и админы)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
-
-                    Button(
-                        onClick = onDismiss,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Закрыть")
-                    }
-                }
             }
         }
     }
 
-    // Homework edit dialog for admins
-    if (editingLesson != null) {
-        val (idx, targetLesson) = editingLesson!!
+    // Admin Lesson Editing Dialog (Subject name, bell time, class tag, homework, apply to all days)
+    editingLesson?.let { lesson ->
         AlertDialog(
             onDismissRequest = { editingLesson = null },
-            title = { Text("Изменить ДЗ: ${targetLesson.subject}") },
+            title = { Text("Урок №${lesson.number}") },
             text = {
-                OutlinedTextField(
-                    value = newHomeworkText,
-                    onValueChange = { newHomeworkText = it },
-                    label = { Text("Домашнее задание") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    maxLines = 4
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = editSubject,
+                        onValueChange = { editSubject = it },
+                        label = { Text("Предмет") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = editTime,
+                        onValueChange = { editTime = it },
+                        label = { Text("Время звонка (например, 08:30 - 09:15)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = editSchoolClass,
+                        onValueChange = { editSchoolClass = it },
+                        label = { Text("Класс (например, 10-А)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = editHomework,
+                        onValueChange = { editHomework = it },
+                        label = { Text("Домашнее задание") },
+                        maxLines = 3,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = applyToAllDays,
+                            onCheckedChange = { applyToAllDays = it }
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Применить время ко всем дням недели", fontSize = 12.sp)
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
                         val activeDay = daysOfWeek[selectedDayIndex]
-                        val list = scheduleState[activeDay]
-                        if (list != null && idx in list.indices) {
-                            list[idx] = list[idx].copy(homework = newHomeworkText.trim())
-                            onSaveLesson?.invoke(targetLesson.number, newHomeworkText.trim())
+                        if (applyToAllDays) {
+                            // Update time globally for all days
+                            daysOfWeek.forEach { day ->
+                                scheduleState[day]?.find { it.number == lesson.number }?.let { l ->
+                                    l.time = editTime
+                                }
+                            }
                         }
+                        // Update current day specific lesson
+                        scheduleState[activeDay]?.find { it.number == lesson.number }?.let { l ->
+                            l.subject = editSubject
+                            l.time = editTime
+                            l.homework = editHomework
+                            l.schoolClass = editSchoolClass
+                        }
+
+                        onSaveLesson?.invoke(lesson.number, editSubject, editTime, editHomework, editSchoolClass)
                         editingLesson = null
                     }
                 ) {

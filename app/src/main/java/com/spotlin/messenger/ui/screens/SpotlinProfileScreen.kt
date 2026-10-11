@@ -42,6 +42,7 @@ fun SpotlinProfileScreen(
     var isUploadingAvatar by remember { mutableStateOf(false) }
     var uploadStatusMessage by remember { mutableStateOf<String?>(null) }
 
+    // Direct tap on avatar launcher
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -106,13 +107,14 @@ fun SpotlinProfileScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Avatar with direct tap-to-change during edit mode or always
             Box(
                 modifier = Modifier
                     .size(110.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primaryContainer)
                     .clickable {
-                        // Directly launch native gallery photo picker
+                        // Per requirement 5: Tap directly on avatar in edit mode or anytime replaces avatar without standalone button
                         photoPickerLauncher.launch("image/*")
                     },
                 contentAlignment = Alignment.Center
@@ -123,33 +125,44 @@ fun SpotlinProfileScreen(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.35f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isUploadingAvatar) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
-                    } else {
-                        Icon(Icons.Default.CameraAlt, contentDescription = "Выбрать из галереи", tint = Color.White)
+
+                if (isEditing || isUploadingAvatar) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isUploadingAvatar) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                modifier = Modifier.size(32.dp),
+                                strokeWidth = 3.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.CameraAlt,
+                                contentDescription = "Нажмите для смены фото",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { photoPickerLauncher.launch("image/*") },
-                shape = RoundedCornerShape(20.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-            ) {
-                Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Выбрать из галереи", fontSize = 13.sp)
+            if (isEditing) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Нажмите на фото для смены",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
             }
 
             if (uploadStatusMessage != null) {
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     uploadStatusMessage!!,
                     fontSize = 12.sp,
@@ -158,7 +171,7 @@ fun SpotlinProfileScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -198,9 +211,10 @@ fun SpotlinProfileScreen(
             }
 
             Text(
-                text = "ID: ${user.id}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline
+                text = user.handle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -239,53 +253,41 @@ fun SpotlinProfileScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Permissions Status Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Школьные полномочия",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            if (user.canEditCalendar) Icons.Default.CheckCircle else Icons.Default.Cancel,
-                            contentDescription = null,
-                            tint = if (user.canEditCalendar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.size(18.dp)
+            // Creator badge info
+            if (user.isCreator) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFB300).copy(alpha = 0.15f)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Shield, contentDescription = null, tint = Color(0xFFFFB300))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            "Создатель Spotlin Messenger (Абсолютные права во всех чатах)",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Редактирование школьного календаря и ДЗ", style = MaterialTheme.typography.bodyMedium)
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            if (user.canManageChat || user.isCreator) Icons.Default.CheckCircle else Icons.Default.Cancel,
-                            contentDescription = null,
-                            tint = if (user.canManageChat || user.isCreator) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Управление и модерация чатов", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
 
             Spacer(modifier = Modifier.weight(1f))
 
-            Button(
+            OutlinedButton(
                 onClick = onLogout,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                shape = RoundedCornerShape(14.dp)
             ) {
-                Text("Выйти из аккаунта", color = MaterialTheme.colorScheme.onErrorContainer)
+                Icon(Icons.Default.ExitToApp, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Выйти из аккаунта", fontWeight = FontWeight.SemiBold)
             }
         }
     }

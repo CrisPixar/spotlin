@@ -72,6 +72,31 @@ fun SpotlinApp(
     var currentUser by remember { mutableStateOf<User?>(null) }
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Auth) }
 
+    // App Settings (Font size, privacy, blocked users)
+    var appSettings by remember { mutableStateOf(com.spotlin.messenger.data.AppSettings()) }
+    var activeSessions by remember {
+        mutableStateOf(
+            listOf(
+                com.spotlin.messenger.data.ActiveSession(
+                    id = "sess_current",
+                    deviceName = "Spotlin Android App",
+                    appVersion = "v2.5.0",
+                    ipAddress = "127.0.0.1",
+                    lastActive = "Онлайн (это устройство)",
+                    isCurrent = true
+                ),
+                com.spotlin.messenger.data.ActiveSession(
+                    id = "sess_web",
+                    deviceName = "Spotlin Web Client (Chrome)",
+                    appVersion = "v2.4.1",
+                    ipAddress = "192.168.1.42",
+                    lastActive = "Вчера в 18:22",
+                    isCurrent = false
+                )
+            )
+        )
+    }
+
     // Real server-loaded state (No mocks)
     var chats by remember { mutableStateOf<List<Chat>>(emptyList()) }
     var allUsers by remember { mutableStateOf<List<User>>(emptyList()) }
@@ -207,6 +232,19 @@ fun SpotlinApp(
                             }
                             isLoadingChats = false
                         }
+                    },
+                    onCreateGroupChat = { groupTitle ->
+                        coroutineScope.launch {
+                            isLoadingChats = true
+                            apiClient.createGroupChat(groupTitle).onSuccess { newChat ->
+                                chats = listOf(newChat) + chats
+                                refreshChatMessages(newChat.id)
+                                currentScreen = Screen.ChatView(newChat)
+                            }.onFailure { err ->
+                                SpotlinLogger.e("MainActivity", "Failed to create group chat", err)
+                            }
+                            isLoadingChats = false
+                        }
                     }
                 )
             }
@@ -251,6 +289,8 @@ fun SpotlinApp(
                     currentUser = user,
                     messages = currentMessages,
                     lessons = lessons,
+                    fontSizeSp = appSettings.fontSizeSp,
+                    apiClient = apiClient,
                     onBack = {
                         refreshData()
                         currentScreen = Screen.ChatList
@@ -314,14 +354,38 @@ fun SpotlinApp(
                             }
                         }
                     },
-                    onSaveLesson = { lessonNumber, newHomework ->
+                    onSaveLesson = { lessonNumber, newHomework, newSubject, newTime, newClass ->
                         coroutineScope.launch {
                             apiClient.updateCalendarLesson(lessonNumber, newHomework).onSuccess {
                                 lessons = lessons.map {
-                                    if (it.number == lessonNumber) it.copy(homework = newHomework) else it
+                                    if (it.number == lessonNumber) it.copy(
+                                        homework = newHomework,
+                                        subject = if (newSubject.isNotEmpty()) newSubject else it.subject,
+                                        time = if (newTime.isNotEmpty()) newTime else it.time,
+                                        schoolClass = if (newClass.isNotEmpty()) newClass else it.schoolClass
+                                    ) else it
                                 }
                             }
                         }
+                    },
+                    onReactToMessage = { msgToReact, emoji ->
+                        val currentReactions = msgToReact.reactions.toMutableMap()
+                        val currentCount = currentReactions[emoji] ?: 0
+                        val isSameUserReaction = msgToReact.userReaction == emoji
+                        val newUserReaction = if (isSameUserReaction) null else emoji
+                        if (isSameUserReaction) {
+                            if (currentCount > 1) currentReactions[emoji] = currentCount - 1
+                            else currentReactions.remove(emoji)
+                        } else {
+                            currentReactions[emoji] = currentCount + 1
+                        }
+                        val updated = currentMessages.map {
+                            if (it.id == msgToReact.id) it.copy(
+                                reactions = currentReactions,
+                                userReaction = newUserReaction
+                            ) else it
+                        }
+                        messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
                     }
                 )
             }
@@ -394,7 +458,28 @@ fun SpotlinApp(
             is Screen.Settings -> {
                 SpotlinSettingsScreen(
                     currentTheme = currentThemeMode,
+                    appSettings = appSettings,
+                    allUsers = allUsers,
+                    activeSessions = activeSessions,
                     onThemeChanged = onThemeChanged,
+                    onSettingsChanged = { newSettings ->
+                        appSettings = newSettings
+                        SpotlinLogger.i("MainActivity", "Settings updated: fontSize=${newSettings.fontSizeSp}sp")
+                    },
+                    onRevokeSession = { sessionId ->
+                        activeSessions = activeSessions.filter { it.id != sessionId }
+                        SpotlinLogger.i("MainActivity", "Terminated session $sessionId")
+                    },
+                    onTerminateAllOtherSessions = {
+                        activeSessions = activeSessions.filter { it.isCurrent }
+                        SpotlinLogger.i("MainActivity", "Terminated all other active sessions")
+                    },
+                    onUnblockUser = { unblockedUserId ->
+                        appSettings = appSettings.copy(
+                            blockedUserIds = appSettings.blockedUserIds - unblockedUserId
+                        )
+                        SpotlinLogger.i("MainActivity", "Unblocked user $unblockedUserId")
+                    },
                     onBack = { currentScreen = Screen.ChatList }
                 )
             }

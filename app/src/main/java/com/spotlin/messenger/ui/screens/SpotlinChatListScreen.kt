@@ -35,9 +35,13 @@ fun SpotlinChatListScreen(
     onOpenSettings: () -> Unit,
     onOpenAdminPanel: () -> Unit,
     onCreateDirectChat: (targetUser: User) -> Unit,
+    onCreateGroupChat: ((title: String) -> Unit)? = null,
     onRefreshChats: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var showCreateGroupDialog by remember { mutableStateOf(false) }
+    var newGroupTitle by remember { mutableStateOf("") }
+    val canCreateGroup = currentUser.isCreator || currentUser.canManageChat
 
     Scaffold(
         topBar = {
@@ -85,6 +89,11 @@ fun SpotlinChatListScreen(
                             Icon(Icons.Default.Security, contentDescription = "Панель Создателя", tint = Color(0xFFFFB300))
                         }
                     }
+                    if (canCreateGroup && onCreateGroupChat != null) {
+                        IconButton(onClick = { showCreateGroupDialog = true }) {
+                            Icon(Icons.Default.GroupAdd, contentDescription = "Создать группу", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Palette, contentDescription = "Темы")
                     }
@@ -109,6 +118,54 @@ fun SpotlinChatListScreen(
             }
         }
     ) { padding ->
+        if (showCreateGroupDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showCreateGroupDialog = false
+                    newGroupTitle = ""
+                },
+                title = { Text("Создать группу", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text(
+                            "Введите название новой группы (доступно администраторам и создателю):",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = newGroupTitle,
+                            onValueChange = { newGroupTitle = it },
+                            placeholder = { Text("Название группы, например: 10-А Класс") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (newGroupTitle.isNotBlank()) {
+                                onCreateGroupChat?.invoke(newGroupTitle.trim())
+                                showCreateGroupDialog = false
+                                newGroupTitle = ""
+                            }
+                        },
+                        enabled = newGroupTitle.isNotBlank()
+                    ) {
+                        Text("Создать")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showCreateGroupDialog = false
+                        newGroupTitle = ""
+                    }) {
+                        Text("Отмена")
+                    }
+                }
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()

@@ -97,4 +97,58 @@ class SpotlinClientModelTest {
         assertFalse(message.isMine)
         assertEquals("Учитель", message.senderBadge)
     }
+
+    @Test
+    fun testAppSettingsModel() {
+        val settings = com.spotlin.messenger.data.AppSettings(
+            fontSizeSp = 18f,
+            blockedUserIds = setOf("bad_user_1", "spammer_2")
+        )
+        assertEquals(18f, settings.fontSizeSp, 0.01f)
+        assertTrue(settings.blockedUserIds.contains("bad_user_1"))
+        assertEquals("Все", settings.lastSeenVisibility)
+    }
+
+    @Test
+    fun testActiveSessionModel() {
+        val session = com.spotlin.messenger.data.ActiveSession(
+            id = "s1",
+            deviceName = "Spotlin Android App",
+            appVersion = "v2.5.0",
+            ipAddress = "192.168.1.1",
+            lastActive = "Онлайн",
+            isCurrent = true
+        )
+        assertEquals("s1", session.id)
+        assertTrue(session.isCurrent)
+    }
+
+    @Test
+    fun testUserHandleAndOnlineStatus() {
+        val user = User(
+            id = "u1",
+            username = "Alex",
+            handle = "alex_dev",
+            isOnline = true
+        )
+        assertEquals("alex_dev", user.handle)
+        assertTrue(user.isOnline)
+    }
+
+    @Test
+    fun testMessageReactionsAndReply() {
+        val msg = Message(
+            id = "m_react",
+            chatId = "c1",
+            senderId = "u1",
+            text = "Привет всем",
+            reactions = mapOf("❤️" to 3, "👍" to 5),
+            userReaction = "👍",
+            replyToMessageId = "m_orig",
+            replyToText = "Исходный текст"
+        )
+        assertEquals(5, msg.reactions["👍"])
+        assertEquals("👍", msg.userReaction)
+        assertEquals("m_orig", msg.replyToMessageId)
+    }
 }

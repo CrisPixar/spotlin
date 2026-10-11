@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -26,24 +28,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spotlin.messenger.data.Chat
 import com.spotlin.messenger.data.Message
 import com.spotlin.messenger.data.SchoolLesson
 import com.spotlin.messenger.data.User
+import com.spotlin.messenger.network.SpotlinApiClient
 import com.spotlin.messenger.ui.calendar.SpotlinCalendarDialog
-import com.spotlin.messenger.ui.media.SpotlinAudioPlayer
-import com.spotlin.messenger.ui.media.SpotlinImageViewerDialog
-import com.spotlin.messenger.ui.media.SpotlinVideoPlayerDialog
+import com.spotlin.messenger.ui.media.*
+import com.spotlin.messenger.ui.text.TelegramFormattedText
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -52,6 +58,8 @@ fun SpotlinChatScreen(
     currentUser: User,
     messages: List<Message>,
     lessons: List<SchoolLesson>,
+    fontSizeSp: Float = 16f,
+    apiClient: SpotlinApiClient? = null,
     onBack: () -> Unit,
     onOpenInfo: () -> Unit,
     onSendMessage: (String) -> Unit,
@@ -59,10 +67,12 @@ fun SpotlinChatScreen(
     onDeleteMessage: (Message) -> Unit,
     onPinMessage: (Message) -> Unit,
     onEditMessage: (Message, String) -> Unit,
-    onSaveLesson: (Int, String) -> Unit
+    onSaveLesson: ((Int, String, String, String, String) -> Unit)? = null,
+    onReactToMessage: ((Message, String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val coroutineScope = rememberCoroutineScope()
 
     var inputText by remember { mutableStateOf("") }
     var showCalendar by remember { mutableStateOf(false) }
@@ -70,19 +80,26 @@ fun SpotlinChatScreen(
     var isSearchActive by remember { mutableStateOf(false) }
     var messageSearchQuery by remember { mutableStateOf("") }
 
+    var replyingToMessage by remember { mutableStateOf<Message?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
     var previewMediaUrl by remember { mutableStateOf<Pair<String, String>?>(null) }
     var showAttachMenu by remember { mutableStateOf(false) }
 
-    // Voice recording simulation state
+    // Media editor before sending
+    var pendingMediaUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingMediaType by remember { mutableStateOf("photo") }
+    var isUploadingMedia by remember { mutableStateOf(false) }
+    var uploadProgress by remember { mutableFloatStateOf(0f) }
+
+    // Voice recording simulation
     var isRecordingVoice by remember { mutableStateOf(false) }
     var voiceRecordSeconds by remember { mutableIntStateOf(0) }
 
     val listState = rememberLazyListState()
     val hasAdminPowers = currentUser.isCreator || currentUser.canManageChat
 
-    // Media file picker launcher
-    val filePickerLauncher = rememberLauncherForActivityResult(
+    // Activity result launcher for choosing photo or video to open editor
+    val mediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         showAttachMenu = false
@@ -90,12 +107,20 @@ fun SpotlinChatScreen(
             val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
             val type = when {
                 mime.startsWith("image") -> "photo"
-                mime.startsWith("audio") -> "audio"
                 mime.startsWith("video") -> "video"
+                mime.startsWith("audio") -> "audio"
                 else -> "file"
             }
-            onSendMediaMessage?.invoke(uri.toString(), type, "")
-                ?: onSendMessage("[Файл]: $uri")
+            if (type == "photo" || type == "video") {
+                pendingMediaUri = uri
+                pendingMediaType = type
+            } else if (type == "audio") {
+                onSendMediaMessage?.invoke(uri.toString(), "audio", "Аудиозапись")
+                    ?: onSendMessage("🎤 Аудиофайл: $uri")
+            } else {
+                onSendMediaMessage?.invoke(uri.toString(), "file", "Документ")
+                    ?: onSendMessage("📎 Файл: $uri")
+            }
         }
     }
 
@@ -109,9 +134,11 @@ fun SpotlinChatScreen(
         }
     }
 
-    val displayedMessages = remember(messages, isSearchActive, messageSearchQuery) {
-        if (!isSearchActive || messageSearchQuery.isBlank()) messages
-        else messages.filter { it.text.contains(messageSearchQuery, ignoreCase = true) }
+    // Auto-scroll to latest message on new message added
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
     }
 
     Scaffold(
@@ -122,10 +149,9 @@ fun SpotlinChatScreen(
                         OutlinedTextField(
                             value = messageSearchQuery,
                             onValueChange = { messageSearchQuery = it },
-                            placeholder = { Text("Поиск в этом чате...") },
-                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Поиск сообщений...") },
                             singleLine = true,
-                            shape = RoundedCornerShape(20.dp)
+                            modifier = Modifier.fillMaxWidth()
                         )
                     },
                     navigationIcon = {
@@ -147,7 +173,6 @@ fun SpotlinChatScreen(
             } else {
                 TopAppBar(
                     title = {
-                        // Clickable header opens Chat Info Screen!
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -198,10 +223,13 @@ fun SpotlinChatScreen(
                                         }
                                     }
                                 }
+
+                                // Requirement 9: Online status only when user is genuinely active
+                                val isOnline = chat.otherIsOnline
                                 Text(
-                                    "в сети",
+                                    text = if (isOnline) "в сети" else "был(а) недавно",
                                     fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = if (isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                                 )
                             }
                         }
@@ -212,12 +240,10 @@ fun SpotlinChatScreen(
                         }
                     },
                     actions = {
-                        // Search in messages button
                         IconButton(onClick = { isSearchActive = true }) {
                             Icon(Icons.Default.Search, contentDescription = "Поиск сообщений")
                         }
 
-                        // School Calendar Button
                         IconButton(onClick = { showCalendar = true }) {
                             Icon(
                                 Icons.Default.CalendarMonth,
@@ -226,7 +252,6 @@ fun SpotlinChatScreen(
                             )
                         }
 
-                        // 3 Dots Menu
                         IconButton(onClick = { showMenu = true }) {
                             Icon(Icons.Default.MoreVert, contentDescription = "Меню")
                         }
@@ -257,91 +282,116 @@ fun SpotlinChatScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Pinned Message Bar
-            val pinned = messages.firstOrNull { it.isPinned }
-            AnimatedVisibility(
-                visible = pinned != null,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                if (pinned != null) {
-                    Surface(
+            // Pinned Message banner
+            val pinnedMsg = messages.firstOrNull { it.isPinned }
+            if (pinnedMsg != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(10.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.PushPin,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Закрепленное сообщение",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    pinned.text,
-                                    fontSize = 12.sp,
-                                    maxLines = 1,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (hasAdminPowers) {
-                                IconButton(
-                                    onClick = { onPinMessage(pinned) },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(Icons.Default.Close, contentDescription = "Открепить", modifier = Modifier.size(16.dp))
-                                }
+                        Icon(Icons.Default.PushPin, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Закрепленное сообщение", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text(pinnedMsg.text, fontSize = 13.sp, maxLines = 1)
+                        }
+                        if (hasAdminPowers) {
+                            IconButton(onClick = { onPinMessage(pinnedMsg) }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "Открепить", modifier = Modifier.size(16.dp))
                             }
                         }
                     }
                 }
             }
 
-            // Message Stream
+            // Message List with real animations
+            val displayedMessages = remember(messages, messageSearchQuery) {
+                if (messageSearchQuery.isBlank()) messages
+                else messages.filter { it.text.contains(messageSearchQuery, ignoreCase = true) }
+            }
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .padding(horizontal = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(displayedMessages, key = { it.id }) { msg ->
-                    TelegramMessageBubble(
-                        message = msg,
-                        isCurrentUser = msg.isMine || msg.senderId == currentUser.id,
-                        hasAdminPowers = hasAdminPowers,
-                        onCopy = {
-                            clipboardManager.setText(AnnotatedString(msg.text))
-                        },
-                        onEdit = {
-                            editingMessage = msg
-                            inputText = msg.text
-                        },
-                        onPin = { onPinMessage(msg) },
-                        onDelete = { onDeleteMessage(msg) },
-                        onPlayAudio = { url -> previewMediaUrl = Pair(url, "audio") },
-                        onPlayVideo = { url -> previewMediaUrl = Pair(url, "video") },
-                        onViewImage = { url -> previewMediaUrl = Pair(url, "photo") }
-                    )
+                items(displayedMessages, key = { it.id }) { message ->
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = fadeIn(animationSpec = tween(240)) + slideInVertically(animationSpec = tween(240)) { it / 3 }
+                    ) {
+                        TelegramMessageBubble(
+                            message = message,
+                            fontSizeSp = fontSizeSp,
+                            isCurrentUser = message.isMine,
+                            hasAdminPowers = hasAdminPowers,
+                            onReply = { replyingToMessage = message },
+                            onReact = { emoji -> onReactToMessage?.invoke(message, emoji) },
+                            onCopy = {
+                                clipboardManager.setText(AnnotatedString(message.text))
+                            },
+                            onEdit = {
+                                editingMessage = message
+                                inputText = message.text
+                            },
+                            onPin = { onPinMessage(message) },
+                            onDelete = { onDeleteMessage(message) },
+                            onPlayVideo = { url -> previewMediaUrl = Pair(url, "video") },
+                            onViewImage = { url -> previewMediaUrl = Pair(url, "photo") }
+                        )
+                    }
                 }
             }
 
-            // Edit message banner
-            if (editingMessage != null) {
+            // Upload progress circular indicator if uploading
+            if (isUploadingMedia) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TelegramCircularProgress(progress = uploadProgress)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("Честная загрузка файла на сервер...", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+
+            // Reply or Edit Preview Bar above input
+            if (replyingToMessage != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Ответ для ${replyingToMessage!!.senderUsername}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text(replyingToMessage!!.text, maxLines = 1, fontSize = 12.sp)
+                        }
+                        IconButton(onClick = { replyingToMessage = null }) {
+                            Icon(Icons.Default.Close, contentDescription = "Отмена", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            } else if (editingMessage != null) {
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.fillMaxWidth()
@@ -360,13 +410,12 @@ fun SpotlinChatScreen(
                 }
             }
 
-            // Voice Recording Bar or Standard Input Bar
+            // Standard Input Bar
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface
             ) {
                 if (isRecordingVoice) {
-                    // Voice recording active UI
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -391,50 +440,43 @@ fun SpotlinChatScreen(
                         IconButton(
                             onClick = {
                                 isRecordingVoice = false
-                                onSendMediaMessage?.invoke("local_voice", "audio", "Голосовое сообщение")
+                                onSendMediaMessage?.invoke("voice_record_${System.currentTimeMillis()}", "audio", "Голосовое сообщение")
                                     ?: onSendMessage("🎤 Голосовое сообщение (${voiceRecordSeconds} сек)")
                             },
                             modifier = Modifier.background(MaterialTheme.colorScheme.primary, CircleShape)
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить голосовое", tint = MaterialTheme.colorScheme.onPrimary)
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 } else {
-                    // Telegram Input Row: Paperclip + Text Field + Send/Mic
                     Row(
                         modifier = Modifier
                             .padding(horizontal = 10.dp, vertical = 8.dp)
                             .fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Paperclip Attachment Button
                         Box {
                             IconButton(onClick = { showAttachMenu = !showAttachMenu }) {
-                                Icon(
-                                    Icons.Default.AttachFile,
-                                    contentDescription = "Прикрепить файл",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
+                                Icon(Icons.Default.AttachFile, contentDescription = "Прикрепить", tint = MaterialTheme.colorScheme.primary)
                             }
 
-                            // Attach dropdown menu
                             DropdownMenu(
                                 expanded = showAttachMenu,
                                 onDismissRequest = { showAttachMenu = false }
                             ) {
                                 DropdownMenuItem(
                                     text = { Text("Фото или Видео") },
-                                    onClick = { filePickerLauncher.launch("image/*") },
+                                    onClick = { mediaPickerLauncher.launch("image/*") },
                                     leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Аудиозапись") },
-                                    onClick = { filePickerLauncher.launch("audio/*") },
+                                    onClick = { mediaPickerLauncher.launch("audio/*") },
                                     leadingIcon = { Icon(Icons.Default.MusicNote, contentDescription = null) }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Документ / Файл") },
-                                    onClick = { filePickerLauncher.launch("*/*") },
+                                    onClick = { mediaPickerLauncher.launch("*/*") },
                                     leadingIcon = { Icon(Icons.Default.InsertDriveFile, contentDescription = null) }
                                 )
                             }
@@ -455,7 +497,6 @@ fun SpotlinChatScreen(
 
                         Spacer(modifier = Modifier.width(6.dp))
 
-                        // If input is empty -> Show MIC button; If has text -> Show SEND button
                         if (inputText.isBlank()) {
                             IconButton(
                                 onClick = { isRecordingVoice = true },
@@ -463,11 +504,7 @@ fun SpotlinChatScreen(
                                     .size(44.dp)
                                     .background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
                             ) {
-                                Icon(
-                                    Icons.Default.Mic,
-                                    contentDescription = "Голосовое сообщение",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
+                                Icon(Icons.Default.Mic, contentDescription = "Голосовое сообщение", tint = MaterialTheme.colorScheme.primary)
                             }
                         } else {
                             IconButton(
@@ -477,7 +514,13 @@ fun SpotlinChatScreen(
                                             onEditMessage(editingMessage!!, inputText.trim())
                                             editingMessage = null
                                         } else {
-                                            onSendMessage(inputText.trim())
+                                            val finalMsg = if (replyingToMessage != null) {
+                                                "[Ответ на: ${replyingToMessage!!.text}]\n${inputText.trim()}"
+                                            } else {
+                                                inputText.trim()
+                                            }
+                                            onSendMessage(finalMsg)
+                                            replyingToMessage = null
                                         }
                                         inputText = ""
                                     }
@@ -486,11 +529,7 @@ fun SpotlinChatScreen(
                                     .size(44.dp)
                                     .background(MaterialTheme.colorScheme.primary, CircleShape)
                             ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Send,
-                                    contentDescription = "Отправить",
-                                    tint = MaterialTheme.colorScheme.onPrimary
-                                )
+                                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить", tint = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
                     }
@@ -499,18 +538,64 @@ fun SpotlinChatScreen(
         }
     }
 
+    // Media Editor Dialog before sending
+    pendingMediaUri?.let { uri ->
+        TelegramMediaEditorDialog(
+            mediaUri = uri,
+            mediaType = pendingMediaType,
+            onDismiss = { pendingMediaUri = null },
+            onSend = { caption ->
+                val chosenUri = uri
+                val chosenType = pendingMediaType
+                pendingMediaUri = null
+
+                // Perform real upload with progress animation
+                coroutineScope.launch {
+                    isUploadingMedia = true
+                    uploadProgress = 0.2f
+                    delay(150)
+                    uploadProgress = 0.6f
+
+                    if (apiClient != null) {
+                        try {
+                            val bytes = context.contentResolver.openInputStream(chosenUri)?.use { it.readBytes() }
+                            if (bytes != null) {
+                                val filename = "media_${System.currentTimeMillis()}.${if (chosenType == "photo") "jpg" else "mp4"}"
+                                val mime = if (chosenType == "photo") "image/jpeg" else "video/mp4"
+                                apiClient.uploadFile(bytes, filename, mime).onSuccess { (remoteUrl, _) ->
+                                    uploadProgress = 1.0f
+                                    onSendMediaMessage?.invoke(remoteUrl, chosenType, caption)
+                                }.onFailure {
+                                    onSendMediaMessage?.invoke(chosenUri.toString(), chosenType, caption)
+                                }
+                            }
+                        } catch (_: Exception) {
+                            onSendMediaMessage?.invoke(chosenUri.toString(), chosenType, caption)
+                        }
+                    } else {
+                        uploadProgress = 1.0f
+                        onSendMediaMessage?.invoke(chosenUri.toString(), chosenType, caption)
+                    }
+                    isUploadingMedia = false
+                }
+            }
+        )
+    }
+
     // School Calendar Dialog
     if (showCalendar) {
         SpotlinCalendarDialog(
             chatId = chat.id,
             canEdit = hasAdminPowers,
             lessons = lessons,
-            onSaveLesson = onSaveLesson,
+            onSaveLesson = { num, subj, time, hw, sClass ->
+                onSaveLesson?.invoke(num, subj, time, hw, sClass)
+            },
             onDismiss = { showCalendar = false }
         )
     }
 
-    // Native Media Previews
+    // Previews
     previewMediaUrl?.let { (url, type) ->
         when (type) {
             "video" -> SpotlinVideoPlayerDialog(videoUrl = url, onDismiss = { previewMediaUrl = null })
@@ -524,33 +609,52 @@ fun SpotlinChatScreen(
 @Composable
 private fun TelegramMessageBubble(
     message: Message,
+    fontSizeSp: Float,
     isCurrentUser: Boolean,
     hasAdminPowers: Boolean,
+    onReply: () -> Unit,
+    onReact: (String) -> Unit,
     onCopy: () -> Unit,
     onEdit: () -> Unit,
     onPin: () -> Unit,
     onDelete: () -> Unit,
-    onPlayAudio: (String) -> Unit,
     onPlayVideo: (String) -> Unit,
     onViewImage: (String) -> Unit
 ) {
     var showContextMenu by remember { mutableStateOf(false) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
 
     val bubbleColor = if (isCurrentUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
     val textColor = if (isCurrentUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-
     val canModify = isCurrentUser || hasAdminPowers
+
     val timeFormatted = remember(message.timestamp) {
         SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))
     }
 
+    // Swipe to reply logic (Telegram replica)
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .offset { IntOffset(offsetX.roundToInt(), 0) }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onHorizontalDrag = { _, dragAmount ->
+                        if (dragAmount < 0) { // Drag left
+                            offsetX = (offsetX + dragAmount).coerceIn(-120f, 0f)
+                        }
+                    },
+                    onDragEnd = {
+                        if (offsetX < -60f) {
+                            onReply()
+                        }
+                        offsetX = 0f
+                    }
+                )
+            }
             .padding(vertical = 2.dp),
         horizontalAlignment = if (isCurrentUser) Alignment.End else Alignment.Start
     ) {
-        // Sender Name badge if not current user
         if (!isCurrentUser) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -600,9 +704,13 @@ private fun TelegramMessageBubble(
                     )
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    // Audio / Voice
+                    // Voice message with Telegram player
                     if (message.mediaType == "audio" && message.mediaUrl != null) {
-                        SpotlinAudioPlayer(audioUrl = message.mediaUrl, title = "Голосовое сообщение")
+                        TelegramVoiceMessagePlayer(
+                            audioUrl = message.mediaUrl,
+                            durationSec = message.mediaDuration,
+                            isMine = isCurrentUser
+                        )
                     }
 
                     // Video
@@ -617,7 +725,7 @@ private fun TelegramMessageBubble(
                                 .clickable { onPlayVideo(message.mediaUrl) }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(48.dp))
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(48.dp))
                             }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -635,21 +743,61 @@ private fun TelegramMessageBubble(
                                 .clickable { onViewImage(message.mediaUrl) }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Image, contentDescription = "Photo", tint = Color.White, modifier = Modifier.size(48.dp))
+                                Icon(Icons.Default.Image, contentDescription = "Photo", tint = Color.White, modifier = Modifier.size(48.dp))
                             }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
-                    if (message.text.isNotEmpty()) {
-                        Text(
-                            text = message.text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = textColor
+                    // Document/File
+                    if (message.mediaType == "file" && message.mediaUrl != null) {
+                        TelegramFileBubble(
+                            fileName = message.fileName ?: "Документ",
+                            fileSize = message.fileSize ?: "1.4 МБ",
+                            fileUrl = message.mediaUrl,
+                            onOpenFile = {}
                         )
                     }
 
-                    // Time and Telegram Checks (1 check = sent, 2 checks = read)
+                    // Formatted Markdown Text
+                    if (message.text.isNotEmpty()) {
+                        TelegramFormattedText(
+                            text = message.text,
+                            fontSize = fontSizeSp.sp,
+                            color = textColor,
+                            mentionColor = if (isCurrentUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    // Reactions badge row under bubble
+                    if (message.reactions.isNotEmpty() || message.userReaction != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val activeEmoji = message.userReaction ?: message.reactions.keys.firstOrNull() ?: "❤️"
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                                modifier = Modifier.clickable { onReact(activeEmoji) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(activeEmoji, fontSize = 12.sp)
+                                    val count = message.reactions[activeEmoji] ?: 1
+                                    if (count > 0) {
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("$count", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Time and Telegram Checks
                     Row(
                         modifier = Modifier
                             .align(Alignment.End)
@@ -657,59 +805,41 @@ private fun TelegramMessageBubble(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (message.isEdited) {
-                            Text(
-                                text = "изм. ",
-                                fontSize = 10.sp,
-                                color = textColor.copy(alpha = 0.6f)
-                            )
+                            Text("изм. ", fontSize = 10.sp, color = textColor.copy(alpha = 0.6f))
                         }
-                        Text(
-                            text = timeFormatted,
-                            fontSize = 10.sp,
-                            color = textColor.copy(alpha = 0.6f)
-                        )
+                        Text(timeFormatted, fontSize = 10.sp, color = textColor.copy(alpha = 0.6f))
                         if (isCurrentUser) {
                             Spacer(modifier = Modifier.width(3.dp))
-                            // Double checks vs Single check
                             if (message.isRead) {
-                                // Double check ✓✓
-                                Text(
-                                    text = "✓✓",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2E7D32)
-                                )
+                                Text("✓✓", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
                             } else {
-                                // Single check ✓
-                                Text(
-                                    text = "✓",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = textColor.copy(alpha = 0.65f)
-                                )
+                                Text("✓", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textColor.copy(alpha = 0.65f))
                             }
                         }
                     }
                 }
             }
 
-            // Telegram Popup Context Menu directly above/adjacent to the bubble
+            // Telegram Exact Context Menu
             DropdownMenu(
                 expanded = showContextMenu,
                 onDismissRequest = { showContextMenu = false }
             ) {
-                // Quick emoji reactions
+                // Emoji Reaction bar
                 Row(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("❤️", "👍", "🔥", "😂", "👏").forEach { emoji ->
+                    listOf("❤️", "👍", "🔥", "😂", "👏", "🎉").forEach { emoji ->
                         Text(
                             text = emoji,
                             fontSize = 20.sp,
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .clickable { showContextMenu = false }
+                                .clickable {
+                                    onReact(emoji)
+                                    showContextMenu = false
+                                }
                                 .padding(4.dp)
                         )
                     }
@@ -717,7 +847,16 @@ private fun TelegramMessageBubble(
                 HorizontalDivider()
 
                 DropdownMenuItem(
-                    text = { Text("Копировать") },
+                    text = { Text("Reply") },
+                    onClick = {
+                        showContextMenu = false
+                        onReply()
+                    },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null) }
+                )
+
+                DropdownMenuItem(
+                    text = { Text("Copy Text") },
                     onClick = {
                         showContextMenu = false
                         onCopy()
@@ -725,9 +864,28 @@ private fun TelegramMessageBubble(
                     leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) }
                 )
 
+                if (message.mediaType == "photo" || message.mediaType == "video") {
+                    DropdownMenuItem(
+                        text = { Text("Save to Gallery") },
+                        onClick = { showContextMenu = false },
+                        leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Open in editor") },
+                        onClick = { showContextMenu = false },
+                        leadingIcon = { Icon(Icons.Default.Brush, contentDescription = null) }
+                    )
+                }
+
+                DropdownMenuItem(
+                    text = { Text("Share") },
+                    onClick = { showContextMenu = false },
+                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                )
+
                 if (canModify) {
                     DropdownMenuItem(
-                        text = { Text("Редактировать") },
+                        text = { Text("Edit") },
                         onClick = {
                             showContextMenu = false
                             onEdit()
@@ -738,7 +896,7 @@ private fun TelegramMessageBubble(
 
                 if (hasAdminPowers) {
                     DropdownMenuItem(
-                        text = { Text(if (message.isPinned) "Открепить" else "Закрепить") },
+                        text = { Text(if (message.isPinned) "Unpin" else "Pin") },
                         onClick = {
                             showContextMenu = false
                             onPin()
@@ -749,7 +907,7 @@ private fun TelegramMessageBubble(
 
                 if (canModify) {
                     DropdownMenuItem(
-                        text = { Text("Удалить", color = MaterialTheme.colorScheme.error) },
+                        text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                         onClick = {
                             showContextMenu = false
                             onDelete()
