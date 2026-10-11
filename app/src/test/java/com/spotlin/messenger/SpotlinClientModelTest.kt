@@ -142,6 +142,7 @@ class SpotlinClientModelTest {
             chatId = "c1",
             senderId = "u1",
             text = "Привет всем",
+            isMine = true,
             reactions = mapOf("❤️" to 3, "👍" to 5),
             userReaction = "👍",
             replyToMessageId = "m_orig",

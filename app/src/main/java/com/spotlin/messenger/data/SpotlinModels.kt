@@ -42,7 +42,7 @@ data class Message(
     val senderBadge: String = "",
     val senderIsCreator: Boolean = false,
     var text: String,
-    val isMine: Boolean,
+    val isMine: Boolean = false,
     var isPinned: Boolean = false,
     var isEdited: Boolean = false,
     var isRead: Boolean = false,
