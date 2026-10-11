@@ -31,6 +31,7 @@ fun SpotlinChatListScreen(
     onOpenProfile: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAdminPanel: () -> Unit,
+    onOpenServerPicker: () -> Unit,
     onNewDirectChat: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -73,6 +74,9 @@ fun SpotlinChatListScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenServerPicker) {
+                        Icon(Icons.Default.Dns, contentDescription = "Сервер")
+                    }
                     if (currentUser.isCreator) {
                         IconButton(onClick = onOpenAdminPanel) {
                             Icon(Icons.Default.Security, contentDescription = "Панель Создателя", tint = Color(0xFFFFB300))
