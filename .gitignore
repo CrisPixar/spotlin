@@ -1,0 +1,44 @@
+# Secrets and API tokens - NEVER COMMIT
+GitHubapi.txt
+Githubapi.txt
+*githubapi*
+*Githubapi*
+*api*.txt
+*.secret
+*.token
+*.env
+*.key
+*.pem
+*.jks
+*.keystore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.pytest_cache/
+server/data/
+server/uploads/
+server/tests/test_data/
+server/java/build/
+
+# Java / Android
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.aab
+
+# Node / Bun
+node_modules/
+bun.lockb
+server/data/
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
