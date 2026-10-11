@@ -263,10 +263,9 @@ fun SpotlinChatScreen(
     // School Calendar Dialog
     if (showCalendar) {
         SpotlinCalendarDialog(
+            chatId = chat.id,
             canEdit = currentUser.isCreator || currentUser.canEditCalendar,
-            lessons = lessons,
-            onDismiss = { showCalendar = false },
-            onSaveLesson = onSaveLesson
+            onDismiss = { showCalendar = false }
         )
     }
 
@@ -417,7 +416,7 @@ private fun MessageBubble(
                 if (message.mediaType != null && message.mediaUrl != null) {
                     when (message.mediaType) {
                         "audio" -> {
-                            SpotlinAudioPlayer(audioUrl = message.mediaUrl, durationSec = message.mediaDuration)
+                            SpotlinAudioPlayer(audioUrl = message.mediaUrl)
                         }
                         "photo" -> {
                             Button(
