@@ -128,10 +128,9 @@ class SpotlinClientModelTest {
         val user = User(
             id = "u1",
             username = "Alex",
-            handle = "alex_dev",
             isOnline = true
         )
-        assertEquals("alex_dev", user.handle)
+        assertEquals("@Alex", user.handle)
         assertTrue(user.isOnline)
     }
 
