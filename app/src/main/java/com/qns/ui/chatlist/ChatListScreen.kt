@@ -7,7 +7,7 @@ import androidx.compose.material.icons.Icons; import androidx.compose.material.i
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
-import androidx.compose.ui.*; import androidx.compose.ui.graphics.Color; import androidx.compose.ui.unit.*
+import androidx.compose.ui.*; import androidx.compose.ui.graphics.Color; import androidx.compose.ui.unit.*; import androidx.compose.ui.text.font.FontWeight
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.qns.data.local.entity.ChatEntity
 import com.qns.ui.theme.EncryptGreen; import com.qns.ui.theme.ScamRed
