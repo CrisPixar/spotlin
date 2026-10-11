@@ -42,19 +42,26 @@ private val PinkScheme = lightColorScheme(
     surfaceVariant = SpotlinPinkSurfaceVariant
 )
 
+enum class ThemeMode {
+    MATERIAL_YOU,
+    LIGHT,
+    DARK,
+    PINK
+}
+
 @Composable
 fun SpotlinTheme(
-    themeMode: String = "material_you", // "material_you", "light", "dark", "pink"
+    themeMode: ThemeMode = ThemeMode.MATERIAL_YOU,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
     val systemDark = isSystemInDarkTheme()
 
-    val colorScheme = when (themeMode.lowercase()) {
-        "pink" -> PinkScheme
-        "light" -> LightScheme
-        "dark" -> DarkScheme
-        else -> { // Material You
+    val colorScheme = when (themeMode) {
+        ThemeMode.PINK -> PinkScheme
+        ThemeMode.LIGHT -> LightScheme
+        ThemeMode.DARK -> DarkScheme
+        ThemeMode.MATERIAL_YOU -> {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (systemDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
             } else {
@@ -69,7 +76,7 @@ fun SpotlinTheme(
             val window = (view.context as? Activity)?.window ?: return@SideEffect
             window.statusBarColor = colorScheme.surface.toArgb()
             window.navigationBarColor = colorScheme.surface.toArgb()
-            val isLight = themeMode == "light" || (themeMode == "material_you" && !systemDark) || themeMode == "pink"
+            val isLight = themeMode == ThemeMode.LIGHT || (themeMode == ThemeMode.MATERIAL_YOU && !systemDark) || themeMode == ThemeMode.PINK
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = isLight
         }
     }
