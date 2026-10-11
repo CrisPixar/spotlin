@@ -20,6 +20,7 @@ import com.spotlin.messenger.ui.info.SpotlinChatInfoScreen
 import com.spotlin.messenger.ui.screens.*
 import com.spotlin.messenger.ui.theme.SpotlinTheme
 import com.spotlin.messenger.ui.theme.ThemeMode
+import com.spotlin.messenger.util.SpotlinLogger
 import kotlinx.coroutines.launch
 
 sealed class Screen {
@@ -35,6 +36,7 @@ sealed class Screen {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SpotlinLogger.i("MainActivity", "Spotlin application started. Debug logging active: ${BuildConfig.DEBUG}")
         setContent {
             var currentThemeMode by remember { mutableStateOf(ThemeMode.MATERIAL_YOU) }
 
@@ -42,7 +44,10 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     SpotlinApp(
                         currentThemeMode = currentThemeMode,
-                        onThemeChanged = { currentThemeMode = it }
+                        onThemeChanged = {
+                            SpotlinLogger.d("MainActivity", "Theme changed to: $it")
+                            currentThemeMode = it
+                        }
                     )
                 }
             }
@@ -245,6 +250,7 @@ fun SpotlinApp(
     ) { screen ->
         when (screen) {
             is Screen.Auth -> {
+                SpotlinLogger.d("MainActivity", "Navigated to Screen.Auth")
                 SpotlinAuthScreen(
                     onLogin = { userLogin, password, isRegister ->
                         coroutineScope.launch {
@@ -274,11 +280,13 @@ fun SpotlinApp(
             }
 
             is Screen.ChatList -> {
+                SpotlinLogger.d("MainActivity", "Navigated to Screen.ChatList")
                 val user = currentUser ?: return@AnimatedContent
                 SpotlinChatListScreen(
                     currentUser = user,
                     chats = chats,
                     onSelectChat = { selectedChat ->
+                        SpotlinLogger.d("MainActivity", "Selected chat: ${selectedChat.id}")
                         currentScreen = Screen.ChatView(selectedChat)
                     },
                     onOpenProfile = { currentScreen = Screen.Profile },
@@ -304,6 +312,7 @@ fun SpotlinApp(
             is Screen.ChatView -> {
                 val user = currentUser ?: return@AnimatedContent
                 val activeChat = screen.chat
+                SpotlinLogger.d("MainActivity", "Navigated to Screen.ChatView for chat ${activeChat.id}")
                 val currentMessages = messagesMap[activeChat.id] ?: emptyList()
 
                 SpotlinChatScreen(
@@ -314,6 +323,7 @@ fun SpotlinApp(
                     onBack = { currentScreen = Screen.ChatList },
                     onOpenInfo = { currentScreen = Screen.ChatInfo(activeChat) },
                     onSendMessage = { text ->
+                        SpotlinLogger.d("MainActivity", "Sending text message to ${activeChat.id}")
                         val newMsg = Message(
                             id = "msg_${System.currentTimeMillis()}",
                             chatId = activeChat.id,
@@ -331,10 +341,12 @@ fun SpotlinApp(
                         }
                     },
                     onDeleteMessage = { msgToDelete ->
+                        SpotlinLogger.d("MainActivity", "Deleting message ${msgToDelete.id}")
                         val updated = currentMessages.filter { it.id != msgToDelete.id }
                         messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
                     },
                     onPinMessage = { msgToPin ->
+                        SpotlinLogger.d("MainActivity", "Toggling pin on message ${msgToPin.id}")
                         val updated = currentMessages.map {
                             if (it.id == msgToPin.id) it.copy(isPinned = !it.isPinned)
                             else it.copy(isPinned = false)
@@ -342,6 +354,7 @@ fun SpotlinApp(
                         messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
                     },
                     onEditMessage = { msgToEdit, newText ->
+                        SpotlinLogger.d("MainActivity", "Editing message ${msgToEdit.id}")
                         val updated = currentMessages.map {
                             if (it.id == msgToEdit.id) it.copy(text = newText, isEdited = true)
                             else it
@@ -349,6 +362,7 @@ fun SpotlinApp(
                         messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
                     },
                     onSaveLesson = { lessonNumber, newHomework ->
+                        SpotlinLogger.d("MainActivity", "Saving lesson $lessonNumber homework: $newHomework")
                         lessons = lessons.map {
                             if (it.number == lessonNumber) it.copy(homework = newHomework) else it
                         }
@@ -357,6 +371,7 @@ fun SpotlinApp(
             }
 
             is Screen.ChatInfo -> {
+                SpotlinLogger.d("MainActivity", "Navigated to Screen.ChatInfo")
                 val user = currentUser ?: return@AnimatedContent
                 SpotlinChatInfoScreen(
                     chat = screen.chat,
@@ -368,14 +383,17 @@ fun SpotlinApp(
             }
 
             is Screen.Profile -> {
+                SpotlinLogger.d("MainActivity", "Navigated to Screen.Profile")
                 val user = currentUser ?: return@AnimatedContent
                 SpotlinProfileScreen(
                     user = user,
                     onBack = { currentScreen = Screen.ChatList },
                     onSaveProfile = { bio, avatar ->
+                        SpotlinLogger.d("MainActivity", "Saving profile bio and avatar")
                         currentUser = user.copy(bio = bio, avatarUrl = avatar)
                     },
                     onLogout = {
+                        SpotlinLogger.i("MainActivity", "Logging out user")
                         currentUser = null
                         currentScreen = Screen.Auth
                     }
@@ -383,6 +401,7 @@ fun SpotlinApp(
             }
 
             is Screen.Settings -> {
+                SpotlinLogger.d("MainActivity", "Navigated to Screen.Settings")
                 SpotlinSettingsScreen(
                     currentTheme = currentThemeMode,
                     onThemeChanged = onThemeChanged,
@@ -391,12 +410,14 @@ fun SpotlinApp(
             }
 
             is Screen.AdminPanel -> {
+                SpotlinLogger.d("MainActivity", "Navigated to Screen.AdminPanel")
                 val user = currentUser ?: return@AnimatedContent
                 SpotlinOwnerAdminScreen(
                     currentUser = user,
                     users = allUsers,
                     onBack = { currentScreen = Screen.ChatList },
                     onUpdateUserBadge = { userId, badge, canEditCalendar, canManageChat ->
+                        SpotlinLogger.i("MainActivity", "Admin updated user $userId badge=$badge calendar=$canEditCalendar chat=$canManageChat")
                         allUsers = allUsers.map { u ->
                             if (u.id == userId) u.copy(
                                 customBadge = badge,

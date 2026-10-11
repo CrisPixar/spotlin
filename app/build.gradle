@@ -17,13 +17,27 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    signingConfigs {
+        debug {
+            // Standard Android debug signing
+        }
+        release {
+            // Use debug key for GitHub Actions APK release assembly without secrets
+            initWith debug
+        }
+    }
+
     buildTypes {
         debug {
             debuggable true
             applicationIdSuffix ".debug"
+            buildConfigField "boolean", "ENABLE_LOGCAT", "true"
         }
         release {
+            debuggable false
             minifyEnabled false
+            signingConfig signingConfigs.release
+            buildConfigField "boolean", "ENABLE_LOGCAT", "false"
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
