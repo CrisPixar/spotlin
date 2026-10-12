@@ -67,34 +67,41 @@ fun SpotlinApp(
 
     // Server is permanently hardcoded to SXT-SV (f1.rustix.me:31774)
     val hardcodedServer = remember { ServerConfig.HARDCODED_SERVER }
-    val apiClient = remember { SpotlinApiClient(baseUrl = hardcodedServer.httpUrl) }
-
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember { context.getSharedPreferences("spotlin_prefs", Context.MODE_PRIVATE) }
 
-    // Start with NO mock user - User MUST authenticate on the Auth screen!
-    var currentUser by remember { mutableStateOf<User?>(null) }
-    var currentScreen by remember { mutableStateOf<Screen>(Screen.Auth) }
+    val savedUserId = remember { prefs.getString("user_id", null) }
+    val savedUsername = remember { prefs.getString("user_username", null) }
+    val savedToken = remember { prefs.getString("auth_token", null) }
+    val hasValidSession = remember { !savedUserId.isNullOrEmpty() && !savedUsername.isNullOrEmpty() && !savedToken.isNullOrEmpty() }
 
-    // Restore saved session on launch
-    LaunchedEffect(Unit) {
-        val savedUserId = prefs.getString("user_id", null)
-        val savedUsername = prefs.getString("user_username", null)
-        val savedToken = prefs.getString("auth_token", null)
-        if (!savedUserId.isNullOrEmpty() && !savedUsername.isNullOrEmpty() && !savedToken.isNullOrEmpty()) {
-            apiClient.authToken = savedToken
-            apiClient.currentUserId = savedUserId
-            currentUser = User(
-                id = savedUserId,
-                username = savedUsername,
-                bio = prefs.getString("user_bio", "") ?: "",
-                isCreator = prefs.getBoolean("user_is_creator", false),
-                customBadge = prefs.getString("user_badge", "") ?: "",
-                canEditCalendar = prefs.getBoolean("user_can_edit_cal", false),
-                canManageChat = prefs.getBoolean("user_can_manage", false)
-            )
-            currentScreen = Screen.ChatList
+    val apiClient = remember {
+        SpotlinApiClient(baseUrl = hardcodedServer.httpUrl).apply {
+            if (hasValidSession) {
+                authToken = savedToken
+                currentUserId = savedUserId
+            }
         }
+    }
+
+    // Start directly with authenticated user if session exists (no login screen flicker)
+    var currentUser by remember {
+        mutableStateOf(
+            if (hasValidSession) {
+                User(
+                    id = savedUserId!!,
+                    username = savedUsername!!,
+                    bio = prefs.getString("user_bio", "") ?: "",
+                    isCreator = prefs.getBoolean("user_is_creator", false),
+                    customBadge = prefs.getString("user_badge", "") ?: "",
+                    canEditCalendar = prefs.getBoolean("user_can_edit_cal", false),
+                    canManageChat = prefs.getBoolean("user_can_manage", false)
+                )
+            } else null
+        )
+    }
+    var currentScreen by remember {
+        mutableStateOf<Screen>(if (hasValidSession) Screen.ChatList else Screen.Auth)
     }
 
     // App Settings (Font size, privacy, blocked users)
@@ -170,6 +177,13 @@ fun SpotlinApp(
                 SpotlinLogger.d("MainActivity", "Loaded ${fetchedMsgs.size} messages for chat $chatId")
             }
             apiClient.markChatRead(chatId)
+        }
+    }
+
+    // Refresh data on launch if session is already restored
+    LaunchedEffect(hasValidSession) {
+        if (hasValidSession) {
+            refreshData()
         }
     }
 
@@ -381,14 +395,14 @@ fun SpotlinApp(
                             }
                         }
                     },
-                    onSaveLesson = { lessonNumber, newHomework, newSubject, newTime, newClass ->
+                    onSaveLesson = { lessonNumber, newSubject, newTime, newHomework, newClass ->
                         coroutineScope.launch {
                             apiClient.updateCalendarLesson(lessonNumber, newHomework).onSuccess {
                                 lessons = lessons.map {
                                     if (it.number == lessonNumber) it.copy(
-                                        homework = newHomework,
                                         subject = if (newSubject.isNotEmpty()) newSubject else it.subject,
                                         time = if (newTime.isNotEmpty()) newTime else it.time,
+                                        homework = newHomework,
                                         schoolClass = if (newClass.isNotEmpty()) newClass else it.schoolClass
                                     ) else it
                                 }

@@ -44,6 +44,7 @@ fun SpotlinCalendarDialog(
     var isLoading by remember { mutableStateOf(true) }
 
     val daysOfWeek = remember { listOf("Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота") }
+    val isSunday = remember { Calendar.getInstance().get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY }
     val currentDayIndex = remember {
         val cal = Calendar.getInstance()
         when (cal.get(Calendar.DAY_OF_WEEK)) {
@@ -135,7 +136,7 @@ fun SpotlinCalendarDialog(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            val todayName = daysOfWeek[currentDayIndex]
+                            val todayName = if (isSunday) "Воскресенье (выходной)" else daysOfWeek[currentDayIndex]
                             Text(
                                 "Сегодня: $todayName • Расписание уроков",
                                 style = MaterialTheme.typography.bodySmall,
@@ -159,7 +160,7 @@ fun SpotlinCalendarDialog(
                 ) {
                     itemsIndexed(daysOfWeek) { index, day ->
                         val isSelected = index == selectedDayIndex
-                        val isToday = index == currentDayIndex
+                        val isToday = !isSunday && (index == currentDayIndex)
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = if (isSelected) MaterialTheme.colorScheme.primary
@@ -384,20 +385,22 @@ fun SpotlinCalendarDialog(
                     onClick = {
                         val activeDay = daysOfWeek[selectedDayIndex]
                         if (applyToAllDays) {
-                            // Update time globally for all days
+                            // Update time globally for all days with new list instance to trigger recomposition
                             daysOfWeek.forEach { day ->
-                                scheduleState[day]?.find { it.number == lesson.number }?.let { l ->
-                                    l.time = editTime
-                                }
+                                scheduleState[day] = scheduleState[day]?.map {
+                                    if (it.number == lesson.number) it.copy(time = editTime) else it
+                                }?.toMutableList() ?: mutableListOf()
                             }
                         }
-                        // Update current day specific lesson
-                        scheduleState[activeDay]?.find { it.number == lesson.number }?.let { l ->
-                            l.subject = editSubject
-                            l.time = editTime
-                            l.homework = editHomework
-                            l.schoolClass = editSchoolClass
-                        }
+                        // Update current day specific lesson with new list instance
+                        scheduleState[activeDay] = scheduleState[activeDay]?.map {
+                            if (it.number == lesson.number) it.copy(
+                                subject = editSubject,
+                                time = editTime,
+                                homework = editHomework,
+                                schoolClass = editSchoolClass
+                            ) else it
+                        }?.toMutableList() ?: mutableListOf()
 
                         onSaveLesson?.invoke(lesson.number, editSubject, editTime, editHomework, editSchoolClass)
                         editingLesson = null

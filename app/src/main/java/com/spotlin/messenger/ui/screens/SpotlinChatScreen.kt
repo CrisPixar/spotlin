@@ -215,22 +215,24 @@ fun SpotlinChatScreen(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 16.sp
                                     )
-                                    if (chat.otherIsCreator) {
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("★", color = Color(0xFFFFB300), fontSize = 14.sp)
-                                    } else if (chat.otherCustomBadge.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = MaterialTheme.colorScheme.secondaryContainer
-                                        ) {
-                                            Text(
-                                                chat.otherCustomBadge,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                            )
+                                    if (chat.type == "direct") {
+                                        if (chat.otherIsCreator) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("★", color = Color(0xFFFFB300), fontSize = 14.sp)
+                                        } else if (chat.otherCustomBadge.isNotBlank() && chat.otherCustomBadge != "null") {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = MaterialTheme.colorScheme.secondaryContainer
+                                            ) {
+                                                Text(
+                                                    chat.otherCustomBadge,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -277,7 +279,7 @@ fun SpotlinChatScreen(
                             onDismissRequest = { showMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Информация о собеседнике") },
+                                text = { Text(if (chat.type == "direct") "Информация о собеседнике" else "Информация о группе") },
                                 onClick = {
                                     showMenu = false
                                     onOpenInfo()
@@ -722,12 +724,32 @@ private fun TelegramMessageBubble(
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     // Voice message with Telegram player OR Music Player
                     if (message.mediaType == "audio" && message.mediaUrl != null) {
-                        val isMusic = message.audioTitle != null || message.fileName?.endsWith(".mp3") == true
+                        val isVoiceNote = message.text.contains("Голосовое сообщение", ignoreCase = true) ||
+                                          message.fileName?.contains("voice", ignoreCase = true) == true ||
+                                          message.mediaUrl.contains("voice", ignoreCase = true)
+                        val isMusic = !isVoiceNote && (
+                            message.audioTitle != null ||
+                            message.audioPerformer != null ||
+                            message.fileName?.endsWith(".mp3", ignoreCase = true) == true ||
+                            message.mediaUrl.endsWith(".mp3", ignoreCase = true) ||
+                            message.text.endsWith(".mp3", ignoreCase = true) ||
+                            message.text.contains("Аудиофайл", ignoreCase = true) ||
+                            message.text.startsWith("🎵") ||
+                            message.mediaType == "audio"
+                        )
                         if (isMusic) {
+                            val rawName = message.audioTitle ?: message.fileName
+                                ?: message.text.removePrefix("🎵 Аудиофайл: ").removePrefix("🎤 Аудиофайл: ").substringBeforeLast(".mp3").ifBlank { "Аудиозапись" }
+                            val (parsedPerformer, parsedSong) = if (rawName.contains(" - ")) {
+                                val parts = rawName.split(" - ", limit = 2)
+                                Pair(parts[0].trim(), parts[1].trim().substringBeforeLast(".mp3"))
+                            } else {
+                                Pair(message.audioPerformer ?: "Исполнитель", rawName.substringBeforeLast(".mp3"))
+                            }
                             TelegramMusicPlayer(
                                 audioUrl = message.mediaUrl,
-                                title = message.audioTitle ?: message.fileName ?: "Аудиозапись",
-                                performer = message.audioPerformer ?: "Исполнитель",
+                                title = parsedSong.ifBlank { "Аудиозапись" },
+                                performer = parsedPerformer.ifBlank { "Исполнитель" },
                                 durationSec = message.mediaDuration,
                                 isMine = isCurrentUser
                             )

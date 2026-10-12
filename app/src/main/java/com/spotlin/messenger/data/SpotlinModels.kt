@@ -66,7 +66,7 @@ data class SchoolLesson(
     var subject: String,
     var time: String,
     var homework: String = "",
-    var schoolClass: String = "10-А"
+    var schoolClass: String = ""
 )
 
 data class ActiveSession(

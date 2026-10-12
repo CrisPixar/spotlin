@@ -17,5 +17,15 @@ data class ServerConfig(
             wsUrl = DEFAULT_WS_URL,
             isDefault = true
         )
+
+        fun resolveMediaUrl(url: String?, baseUrl: String = DEFAULT_HTTP_URL): String {
+            if (url.isNullOrBlank()) return ""
+            if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("content://") || url.startsWith("file://")) {
+                return url
+            }
+            val cleanBase = baseUrl.trimEnd('/')
+            val cleanPath = if (url.startsWith("/")) url else "/$url"
+            return "$cleanBase$cleanPath"
+        }
     }
 }

@@ -4,6 +4,7 @@ import com.spotlin.messenger.BuildConfig
 import com.spotlin.messenger.data.Chat
 import com.spotlin.messenger.data.Message
 import com.spotlin.messenger.data.SchoolLesson
+import com.spotlin.messenger.data.ServerConfig
 import com.spotlin.messenger.data.User
 import com.spotlin.messenger.util.SpotlinLogger
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,12 @@ import okhttp3.logging.HttpLoggingInterceptor
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+
+private fun JSONObject.optCleanString(name: String, fallback: String = ""): String {
+    if (isNull(name)) return fallback
+    val v = optString(name, fallback)
+    return if (v == "null") fallback else v
+}
 
 class SpotlinApiClient(
     private var baseUrl: String = "http://f1.rustix.me:31774"
@@ -212,16 +219,22 @@ class SpotlinApiClient(
             val list = mutableListOf<Chat>()
             for (i in 0 until array.length()) {
                 val item = array.getJSONObject(i)
+                val type = item.optCleanString("type", "direct")
+                val title = item.optCleanString("title", "Диалог")
+                val otherId = item.optCleanString("other_user_id", "")
+                val rawOtherUsername = item.optCleanString("other_username", "")
+                val otherUsername = if (rawOtherUsername.isNotBlank()) rawOtherUsername else (if (type == "group") title else "Пользователь")
+                val otherBadge = item.optCleanString("other_badge", "")
                 list.add(
                     Chat(
-                        id = item.optString("id"),
-                        type = item.optString("type", "direct"),
-                        title = item.optString("title", "Диалог"),
-                        otherUserId = item.optString("other_user_id", ""),
-                        otherUsername = item.optString("other_username", item.optString("title")),
-                        otherCustomBadge = item.optString("other_badge", ""),
+                        id = item.optCleanString("id"),
+                        type = type,
+                        title = title,
+                        otherUserId = otherId,
+                        otherUsername = otherUsername,
+                        otherCustomBadge = otherBadge,
                         otherIsCreator = item.optInt("other_is_creator", 0) == 1,
-                        lastMessage = item.optString("last_message", ""),
+                        lastMessage = item.optCleanString("last_message", ""),
                         timestamp = (item.optDouble("last_time", 0.0) * 1000).toLong()
                     )
                 )
@@ -374,22 +387,29 @@ class SpotlinApiClient(
             val list = mutableListOf<Message>()
             for (i in 0 until array.length()) {
                 val item = array.getJSONObject(i)
+                val rawMediaUrl = if (item.isNull("media_url")) null else item.optCleanString("media_url").ifBlank { null }
+                val resolvedMediaUrl = rawMediaUrl?.let { ServerConfig.resolveMediaUrl(it, baseUrl) }
+                val rawType = if (item.isNull("media_type")) null else item.optCleanString("media_type").ifBlank { null }
                 list.add(
                     Message(
-                        id = item.optString("id"),
-                        chatId = item.optString("chat_id"),
-                        senderId = item.optString("sender_id"),
-                        senderUsername = item.optString("sender_username", ""),
-                        senderBadge = item.optString("sender_badge", ""),
+                        id = item.optCleanString("id"),
+                        chatId = item.optCleanString("chat_id"),
+                        senderId = item.optCleanString("sender_id"),
+                        senderUsername = item.optCleanString("sender_username", ""),
+                        senderBadge = item.optCleanString("sender_badge", ""),
                         senderIsCreator = item.optInt("sender_is_creator", 0) == 1,
-                        text = item.optString("ciphertext", ""),
-                        isMine = (currentUserId != null && item.optString("sender_id") == currentUserId),
+                        text = item.optCleanString("ciphertext", ""),
+                        isMine = (currentUserId != null && item.optCleanString("sender_id") == currentUserId),
                         isPinned = item.optInt("is_pinned", 0) == 1,
                         isEdited = item.optInt("is_edited", 0) == 1,
                         isRead = item.optInt("is_read", 0) == 1,
-                        mediaUrl = if (item.isNull("media_url")) null else item.optString("media_url"),
-                        mediaType = if (item.isNull("media_type")) null else item.optString("media_type"),
+                        mediaUrl = resolvedMediaUrl,
+                        mediaType = rawType,
                         mediaDuration = item.optDouble("media_duration", 0.0).toFloat(),
+                        fileName = if (item.isNull("file_name")) null else item.optCleanString("file_name").ifBlank { null },
+                        fileSize = if (item.isNull("file_size")) null else item.optCleanString("file_size").ifBlank { null },
+                        audioTitle = if (item.isNull("audio_title")) null else item.optCleanString("audio_title").ifBlank { null },
+                        audioPerformer = if (item.isNull("audio_performer")) null else item.optCleanString("audio_performer").ifBlank { null },
                         timestamp = (item.optDouble("created_at", 0.0) * 1000).toLong()
                     )
                 )
@@ -425,18 +445,25 @@ class SpotlinApiClient(
             }
 
             val item = JSONObject(body)
+            val rawMediaUrl = if (item.isNull("media_url")) mediaUrl else item.optCleanString("media_url").ifBlank { mediaUrl }
+            val resolvedMediaUrl = rawMediaUrl?.let { ServerConfig.resolveMediaUrl(it, baseUrl) }
+            val rawType = if (item.isNull("media_type")) mediaType else item.optCleanString("media_type").ifBlank { mediaType }
             val msg = Message(
-                id = item.optString("id"),
-                chatId = item.optString("chat_id"),
-                senderId = item.optString("sender_id"),
-                senderUsername = item.optString("sender_username", ""),
-                senderBadge = item.optString("sender_badge", ""),
+                id = item.optCleanString("id"),
+                chatId = item.optCleanString("chat_id"),
+                senderId = item.optCleanString("sender_id"),
+                senderUsername = item.optCleanString("sender_username", ""),
+                senderBadge = item.optCleanString("sender_badge", ""),
                 senderIsCreator = item.optBoolean("sender_is_creator", false),
-                text = item.optString("ciphertext", ""),
+                text = item.optCleanString("ciphertext", ""),
                 isMine = true,
                 isRead = false,
-                mediaUrl = if (item.isNull("media_url")) null else item.optString("media_url"),
-                mediaType = if (item.isNull("media_type")) null else item.optString("media_type"),
+                mediaUrl = resolvedMediaUrl,
+                mediaType = rawType,
+                fileName = if (item.isNull("file_name")) null else item.optCleanString("file_name").ifBlank { null },
+                fileSize = if (item.isNull("file_size")) null else item.optCleanString("file_size").ifBlank { null },
+                audioTitle = if (item.isNull("audio_title")) null else item.optCleanString("audio_title").ifBlank { null },
+                audioPerformer = if (item.isNull("audio_performer")) null else item.optCleanString("audio_performer").ifBlank { null },
                 timestamp = (item.optDouble("created_at", 0.0) * 1000).toLong()
             )
             SpotlinLogger.i("SpotlinChat", "Message sent successfully: ${msg.id}")
@@ -552,9 +579,10 @@ class SpotlinApiClient(
                 list.add(
                     SchoolLesson(
                         number = item.optInt("lesson_number", 1),
-                        subject = item.optString("subject", ""),
-                        time = item.optString("time_range", ""),
-                        homework = item.optString("homework", "")
+                        subject = item.optCleanString("subject", ""),
+                        time = item.optCleanString("time_range", ""),
+                        homework = item.optCleanString("homework", ""),
+                        schoolClass = item.optCleanString("school_class", "")
                     )
                 )
             }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -20,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.spotlin.messenger.data.ServerConfig
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,6 +62,7 @@ fun TelegramVoiceMessagePlayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val resolvedAudioUrl = remember(audioUrl) { ServerConfig.resolveMediaUrl(audioUrl) }
     var isPlaying by remember { mutableStateOf(false) }
     var currentPositionMs by remember { mutableIntStateOf(0) }
     val initialDurationMs = remember(durationSec) {
@@ -70,11 +73,11 @@ fun TelegramVoiceMessagePlayer(
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var isSimulated by remember { mutableStateOf(false) }
 
-    val mediaPlayer = remember(audioUrl) {
+    val mediaPlayer = remember(resolvedAudioUrl) {
         MediaPlayer().apply {
             try {
-                if (audioUrl.startsWith("http://") || audioUrl.startsWith("https://")) {
-                    setDataSource(audioUrl)
+                if (resolvedAudioUrl.startsWith("http://") || resolvedAudioUrl.startsWith("https://")) {
+                    setDataSource(resolvedAudioUrl)
                     setOnPreparedListener { mp ->
                         totalDurationMs = if (mp.duration > 0) mp.duration else initialDurationMs
                         isPrepared = true
@@ -84,8 +87,8 @@ fun TelegramVoiceMessagePlayer(
                         currentPositionMs = 0
                     }
                     prepareAsync()
-                } else if (audioUrl.startsWith("content://") || audioUrl.startsWith("file://")) {
-                    setDataSource(context, Uri.parse(audioUrl))
+                } else if (resolvedAudioUrl.startsWith("content://") || resolvedAudioUrl.startsWith("file://")) {
+                    setDataSource(context, Uri.parse(resolvedAudioUrl))
                     setOnPreparedListener { mp ->
                         totalDurationMs = if (mp.duration > 0) mp.duration else initialDurationMs
                         isPrepared = true
@@ -109,7 +112,7 @@ fun TelegramVoiceMessagePlayer(
         }
     }
 
-    DisposableEffect(audioUrl) {
+    DisposableEffect(resolvedAudioUrl) {
         onDispose {
             try {
                 if (mediaPlayer.isPlaying) {
@@ -195,6 +198,7 @@ fun TelegramVoiceMessagePlayer(
                 progress = progress,
                 activeColor = activeColor,
                 inactiveColor = inactiveColor,
+                waveSeed = audioUrl.hashCode(),
                 onSeek = { seekFraction ->
                     val targetMs = (seekFraction * totalDurationMs).toInt().coerceIn(0, totalDurationMs)
                     currentPositionMs = targetMs
@@ -255,23 +259,37 @@ fun TelegramVoiceWaveform(
     activeColor: Color,
     inactiveColor: Color,
     onSeek: (Float) -> Unit = {},
+    waveSeed: Int = 0,
     modifier: Modifier = Modifier
 ) {
-    val barHeights = remember {
-        listOf(
-            0.35f, 0.55f, 0.85f, 0.45f, 0.65f, 0.95f, 0.75f, 0.5f, 1.0f, 0.8f,
-            0.6f, 0.4f, 0.75f, 0.9f, 0.55f, 0.35f, 0.65f, 0.85f, 0.45f, 0.75f,
-            0.5f, 0.35f, 0.65f, 0.95f, 0.7f, 0.45f, 0.85f, 0.6f, 0.5f, 0.35f
-        )
+    val barHeights = remember(waveSeed) {
+        if (waveSeed == 0) {
+            listOf(
+                0.35f, 0.55f, 0.85f, 0.45f, 0.65f, 0.95f, 0.75f, 0.5f, 1.0f, 0.8f,
+                0.6f, 0.4f, 0.75f, 0.9f, 0.55f, 0.35f, 0.65f, 0.85f, 0.45f, 0.75f,
+                0.5f, 0.35f, 0.65f, 0.95f, 0.7f, 0.45f, 0.85f, 0.6f, 0.5f, 0.35f
+            )
+        } else {
+            val rnd = java.util.Random(waveSeed.toLong())
+            List(30) { 0.25f + rnd.nextFloat() * 0.75f }
+        }
     }
 
     Canvas(
-        modifier = modifier.pointerInput(Unit) {
-            detectTapGestures { offset ->
-                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
-                onSeek(fraction)
+        modifier = modifier
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                    onSeek(fraction)
+                }
             }
-        }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures { change, _ ->
+                    change.consume()
+                    val fraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                    onSeek(fraction)
+                }
+            }
     ) {
         val totalBars = barHeights.size
         val barWidth = 3.dp.toPx()
@@ -310,6 +328,7 @@ fun TelegramMusicPlayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val resolvedAudioUrl = remember(audioUrl) { ServerConfig.resolveMediaUrl(audioUrl) }
     var isPlaying by remember { mutableStateOf(false) }
     var currentPositionMs by remember { mutableIntStateOf(0) }
     val initialDurationMs = remember(durationSec) {
@@ -318,11 +337,11 @@ fun TelegramMusicPlayer(
     var totalDurationMs by remember { mutableIntStateOf(initialDurationMs) }
     var isSimulated by remember { mutableStateOf(false) }
 
-    val mediaPlayer = remember(audioUrl) {
+    val mediaPlayer = remember(resolvedAudioUrl) {
         MediaPlayer().apply {
             try {
-                if (audioUrl.startsWith("http://") || audioUrl.startsWith("https://")) {
-                    setDataSource(audioUrl)
+                if (resolvedAudioUrl.startsWith("http://") || resolvedAudioUrl.startsWith("https://")) {
+                    setDataSource(resolvedAudioUrl)
                     setOnPreparedListener { mp ->
                         totalDurationMs = if (mp.duration > 0) mp.duration else initialDurationMs
                     }
@@ -331,8 +350,8 @@ fun TelegramMusicPlayer(
                         currentPositionMs = 0
                     }
                     prepareAsync()
-                } else if (audioUrl.startsWith("content://") || audioUrl.startsWith("file://")) {
-                    setDataSource(context, Uri.parse(audioUrl))
+                } else if (resolvedAudioUrl.startsWith("content://") || resolvedAudioUrl.startsWith("file://")) {
+                    setDataSource(context, Uri.parse(resolvedAudioUrl))
                     setOnPreparedListener { mp ->
                         totalDurationMs = if (mp.duration > 0) mp.duration else initialDurationMs
                     }
@@ -352,7 +371,7 @@ fun TelegramMusicPlayer(
         }
     }
 
-    DisposableEffect(audioUrl) {
+    DisposableEffect(resolvedAudioUrl) {
         onDispose {
             try {
                 if (mediaPlayer.isPlaying) mediaPlayer.stop()
@@ -590,17 +609,22 @@ fun TelegramPhotoBubble(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var bitmap by remember(imageUrl) { mutableStateOf<Bitmap?>(null) }
-    var isLoading by remember(imageUrl) { mutableStateOf(true) }
+    val resolvedUrl = remember(imageUrl) { ServerConfig.resolveMediaUrl(imageUrl) }
+    var bitmap by remember(resolvedUrl) { mutableStateOf<Bitmap?>(null) }
+    var isLoading by remember(resolvedUrl) { mutableStateOf(true) }
 
-    LaunchedEffect(imageUrl) {
+    LaunchedEffect(resolvedUrl) {
         withContext(Dispatchers.IO) {
             try {
-                if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
-                    val stream: InputStream = URL(imageUrl).openStream()
+                if (resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://")) {
+                    val conn = URL(resolvedUrl).openConnection()
+                    conn.connectTimeout = 8000
+                    conn.readTimeout = 8000
+                    val stream: InputStream = conn.getInputStream()
                     bitmap = BitmapFactory.decodeStream(stream)
-                } else if (imageUrl.startsWith("content://") || imageUrl.startsWith("file://")) {
-                    val stream = context.contentResolver.openInputStream(Uri.parse(imageUrl))
+                    stream.close()
+                } else if (resolvedUrl.startsWith("content://") || resolvedUrl.startsWith("file://")) {
+                    val stream = context.contentResolver.openInputStream(Uri.parse(resolvedUrl))
                     bitmap = BitmapFactory.decodeStream(stream)
                     stream?.close()
                 }
@@ -675,6 +699,7 @@ fun SpotlinVideoPlayerDialog(
     videoUrl: String,
     onDismiss: () -> Unit
 ) {
+    val resolvedVideoUrl = remember(videoUrl) { ServerConfig.resolveMediaUrl(videoUrl) }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -690,7 +715,7 @@ fun SpotlinVideoPlayerDialog(
                         val controller = MediaController(ctx)
                         controller.setAnchorView(this)
                         setMediaController(controller)
-                        setVideoURI(Uri.parse(videoUrl))
+                        setVideoURI(Uri.parse(resolvedVideoUrl))
                         setOnPreparedListener { mp ->
                             mp.isLooping = true
                             start()
@@ -722,17 +747,27 @@ fun SpotlinImageViewerDialog(
     title: String = "Фотография",
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val resolvedUrl = remember(imageUrl) { ServerConfig.resolveMediaUrl(imageUrl) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    LaunchedEffect(imageUrl) {
+    LaunchedEffect(resolvedUrl) {
         withContext(Dispatchers.IO) {
             try {
-                if (imageUrl.startsWith("http")) {
-                    val stream: InputStream = URL(imageUrl).openStream()
+                if (resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://")) {
+                    val conn = URL(resolvedUrl).openConnection()
+                    conn.connectTimeout = 8000
+                    conn.readTimeout = 8000
+                    val stream: InputStream = conn.getInputStream()
                     bitmap = BitmapFactory.decodeStream(stream)
+                    stream.close()
+                } else if (resolvedUrl.startsWith("content://") || resolvedUrl.startsWith("file://")) {
+                    val stream = context.contentResolver.openInputStream(Uri.parse(resolvedUrl))
+                    bitmap = BitmapFactory.decodeStream(stream)
+                    stream?.close()
                 }
             } catch (_: Exception) {}
         }

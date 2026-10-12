@@ -167,4 +167,30 @@ class SpotlinClientModelTest {
         assertEquals("Never Gonna Give You Up", audioMsg.audioTitle)
         assertEquals("Rick Astley", audioMsg.audioPerformer)
     }
+
+    @Test
+    fun testResolveMediaUrl() {
+        val relative = "/uploads/test_photo.jpg"
+        val resolved = ServerConfig.resolveMediaUrl(relative)
+        assertEquals("http://f1.rustix.me:31774/uploads/test_photo.jpg", resolved)
+
+        val fullUrl = "https://cdn.example.com/audio.ogg"
+        assertEquals(fullUrl, ServerConfig.resolveMediaUrl(fullUrl))
+
+        val contentUri = "content://media/external/images/media/42"
+        assertEquals(contentUri, ServerConfig.resolveMediaUrl(contentUri))
+
+        assertEquals("", ServerConfig.resolveMediaUrl(null))
+        assertEquals("", ServerConfig.resolveMediaUrl(""))
+    }
+
+    @Test
+    fun testSchoolLessonDefaultClassEmpty() {
+        val lesson = SchoolLesson(
+            number = 2,
+            subject = "Физика",
+            time = "09:25 - 10:10"
+        )
+        assertEquals("", lesson.schoolClass)
+    }
 }
