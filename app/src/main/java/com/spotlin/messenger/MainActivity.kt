@@ -1,5 +1,6 @@
 package com.spotlin.messenger
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -68,9 +69,33 @@ fun SpotlinApp(
     val hardcodedServer = remember { ServerConfig.HARDCODED_SERVER }
     val apiClient = remember { SpotlinApiClient(baseUrl = hardcodedServer.httpUrl) }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember { context.getSharedPreferences("spotlin_prefs", Context.MODE_PRIVATE) }
+
     // Start with NO mock user - User MUST authenticate on the Auth screen!
     var currentUser by remember { mutableStateOf<User?>(null) }
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Auth) }
+
+    // Restore saved session on launch
+    LaunchedEffect(Unit) {
+        val savedUserId = prefs.getString("user_id", null)
+        val savedUsername = prefs.getString("user_username", null)
+        val savedToken = prefs.getString("auth_token", null)
+        if (!savedUserId.isNullOrEmpty() && !savedUsername.isNullOrEmpty() && !savedToken.isNullOrEmpty()) {
+            apiClient.authToken = savedToken
+            apiClient.currentUserId = savedUserId
+            currentUser = User(
+                id = savedUserId,
+                username = savedUsername,
+                bio = prefs.getString("user_bio", "") ?: "",
+                isCreator = prefs.getBoolean("user_is_creator", false),
+                customBadge = prefs.getString("user_badge", "") ?: "",
+                canEditCalendar = prefs.getBoolean("user_can_edit_cal", false),
+                canManageChat = prefs.getBoolean("user_can_manage", false)
+            )
+            currentScreen = Screen.ChatList
+        }
+    }
 
     // App Settings (Font size, privacy, blocked users)
     var appSettings by remember { mutableStateOf(com.spotlin.messenger.data.AppSettings()) }
@@ -78,20 +103,12 @@ fun SpotlinApp(
         mutableStateOf(
             listOf(
                 com.spotlin.messenger.data.ActiveSession(
-                    id = "sess_current",
-                    deviceName = "Spotlin Android App",
-                    appVersion = "v2.5.0",
+                    id = "sess_android_current",
+                    deviceName = "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}",
+                    appVersion = "v2.5.0 (Spotlin Android)",
                     ipAddress = "127.0.0.1",
                     lastActive = "Онлайн (это устройство)",
                     isCurrent = true
-                ),
-                com.spotlin.messenger.data.ActiveSession(
-                    id = "sess_web",
-                    deviceName = "Spotlin Web Client (Chrome)",
-                    appVersion = "v2.4.1",
-                    ipAddress = "192.168.1.42",
-                    lastActive = "Вчера в 18:22",
-                    isCurrent = false
                 )
             )
         )
@@ -184,6 +201,16 @@ fun SpotlinApp(
                             result.onSuccess { (token, user) ->
                                 isAuthLoading = false
                                 currentUser = user
+                                prefs.edit()
+                                    .putString("auth_token", token)
+                                    .putString("user_id", user.id)
+                                    .putString("user_username", user.username)
+                                    .putString("user_bio", user.bio)
+                                    .putBoolean("user_is_creator", user.isCreator)
+                                    .putString("user_badge", user.customBadge)
+                                    .putBoolean("user_can_edit_cal", user.canEditCalendar)
+                                    .putBoolean("user_can_manage", user.canManageChat)
+                                    .apply()
                                 SpotlinLogger.i("MainActivity", "User ${user.username} authenticated successfully. Switching to ChatList.")
                                 refreshData()
                                 currentScreen = Screen.ChatList
@@ -386,6 +413,9 @@ fun SpotlinApp(
                             ) else it
                         }
                         messagesMap = messagesMap.toMutableMap().apply { put(activeChat.id, updated) }
+                    },
+                    onRefreshMessages = {
+                        refreshChatMessages(activeChat.id)
                     }
                 )
             }
@@ -446,7 +476,9 @@ fun SpotlinApp(
                     },
                     onLogout = {
                         SpotlinLogger.i("MainActivity", "User logged out")
+                        prefs.edit().clear().apply()
                         apiClient.authToken = null
+                        apiClient.currentUserId = null
                         currentUser = null
                         chats = emptyList()
                         messagesMap = emptyMap()

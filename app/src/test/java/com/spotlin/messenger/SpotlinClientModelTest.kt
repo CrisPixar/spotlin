@@ -151,4 +151,20 @@ class SpotlinClientModelTest {
         assertEquals("👍", msg.userReaction)
         assertEquals("m_orig", msg.replyToMessageId)
     }
+
+    @Test
+    fun testMessageAudioSongMetadata() {
+        val audioMsg = Message(
+            id = "m_song",
+            chatId = "c1",
+            senderId = "u1",
+            text = "Track",
+            mediaType = "audio",
+            audioTitle = "Never Gonna Give You Up",
+            audioPerformer = "Rick Astley"
+        )
+        assertEquals("audio", audioMsg.mediaType)
+        assertEquals("Never Gonna Give You Up", audioMsg.audioTitle)
+        assertEquals("Rick Astley", audioMsg.audioPerformer)
+    }
 }

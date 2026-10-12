@@ -155,9 +155,13 @@ fun SpotlinChatInfoScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text = "в сети",
+                        text = if (isDirect) {
+                            if (chat.otherIsOnline) "в сети" else "был(а) недавно"
+                        } else {
+                            if (members.isNotEmpty()) "${members.size} участников" else "группа"
+                        },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = if (isDirect && chat.otherIsOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                     )
                 }
             }
@@ -170,7 +174,7 @@ fun SpotlinChatInfoScreen(
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        if (otherUser.bio.isNotEmpty()) {
+                        if (isDirect && otherUser.bio.isNotEmpty()) {
                             Text(
                                 "О себе",
                                 style = MaterialTheme.typography.labelMedium,
@@ -183,13 +187,18 @@ fun SpotlinChatInfoScreen(
                         }
 
                         Text(
-                            "Имя пользователя (ID)",
+                            if (isDirect) "Имя пользователя" else "Идентификатор группы",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("@${chat.otherUsername} (${chat.otherUserId})", style = MaterialTheme.typography.bodyMedium)
+                        val handleText = if (isDirect) {
+                            if (chat.otherUsername.isNotEmpty()) "@${chat.otherUsername}" else "@id_${chat.otherUserId}"
+                        } else {
+                            "Группа: ${chat.title}"
+                        }
+                        Text(handleText, style = MaterialTheme.typography.bodyMedium)
 
                         Spacer(modifier = Modifier.height(16.dp))
                         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)

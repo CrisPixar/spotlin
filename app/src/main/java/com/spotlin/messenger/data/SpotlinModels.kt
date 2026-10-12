@@ -51,6 +51,8 @@ data class Message(
     val mediaDuration: Float = 0f,
     val fileName: String? = null,
     val fileSize: String? = null,
+    val audioTitle: String? = null,
+    val audioPerformer: String? = null,
     val reactions: Map<String, Int> = emptyMap(), // emoji -> count
     val userReaction: String? = null,
     val replyToMessageId: String? = null,

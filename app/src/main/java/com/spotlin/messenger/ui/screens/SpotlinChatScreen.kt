@@ -68,7 +68,8 @@ fun SpotlinChatScreen(
     onPinMessage: (Message) -> Unit,
     onEditMessage: (Message, String) -> Unit,
     onSaveLesson: ((Int, String, String, String, String) -> Unit)? = null,
-    onReactToMessage: ((Message, String) -> Unit)? = null
+    onReactToMessage: ((Message, String) -> Unit)? = null,
+    onRefreshMessages: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -115,11 +116,13 @@ fun SpotlinChatScreen(
                 pendingMediaUri = uri
                 pendingMediaType = type
             } else if (type == "audio") {
-                onSendMediaMessage?.invoke(uri.toString(), "audio", "Аудиозапись")
-                    ?: onSendMessage("🎤 Аудиофайл: $uri")
+                val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "audio_${System.currentTimeMillis()}.mp3"
+                onSendMediaMessage?.invoke(uri.toString(), "audio", filename)
+                    ?: onSendMessage("🎵 Аудиофайл: $filename")
             } else {
-                onSendMediaMessage?.invoke(uri.toString(), "file", "Документ")
-                    ?: onSendMessage("📎 Файл: $uri")
+                val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "file_${System.currentTimeMillis()}"
+                onSendMediaMessage?.invoke(uri.toString(), "file", filename)
+                    ?: onSendMessage("📎 Файл: $filename")
             }
         }
     }
@@ -138,6 +141,14 @@ fun SpotlinChatScreen(
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    // Realtime message updates polling loop
+    LaunchedEffect(chat.id) {
+        while (true) {
+            delay(2000)
+            onRefreshMessages?.invoke()
         }
     }
 
@@ -225,11 +236,16 @@ fun SpotlinChatScreen(
                                 }
 
                                 // Requirement 9: Online status only when user is genuinely active
-                                val isOnline = chat.otherIsOnline
+                                val isDirect = chat.type == "direct"
+                                val statusText = if (isDirect) {
+                                    if (chat.otherIsOnline) "в сети" else "был(а) недавно"
+                                } else {
+                                    "группа"
+                                }
                                 Text(
-                                    text = if (isOnline) "в сети" else "был(а) недавно",
+                                    text = statusText,
                                     fontSize = 12.sp,
-                                    color = if (isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                    color = if (isDirect && chat.otherIsOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                                 )
                             }
                         }
@@ -365,7 +381,7 @@ fun SpotlinChatScreen(
                     ) {
                         TelegramCircularProgress(progress = uploadProgress)
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text("Честная загрузка файла на сервер...", style = MaterialTheme.typography.bodySmall)
+                        Text("Загрузка файла...", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -704,13 +720,24 @@ private fun TelegramMessageBubble(
                     )
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    // Voice message with Telegram player
+                    // Voice message with Telegram player OR Music Player
                     if (message.mediaType == "audio" && message.mediaUrl != null) {
-                        TelegramVoiceMessagePlayer(
-                            audioUrl = message.mediaUrl,
-                            durationSec = message.mediaDuration,
-                            isMine = isCurrentUser
-                        )
+                        val isMusic = message.audioTitle != null || message.fileName?.endsWith(".mp3") == true
+                        if (isMusic) {
+                            TelegramMusicPlayer(
+                                audioUrl = message.mediaUrl,
+                                title = message.audioTitle ?: message.fileName ?: "Аудиозапись",
+                                performer = message.audioPerformer ?: "Исполнитель",
+                                durationSec = message.mediaDuration,
+                                isMine = isCurrentUser
+                            )
+                        } else {
+                            TelegramVoiceMessagePlayer(
+                                audioUrl = message.mediaUrl,
+                                durationSec = message.mediaDuration,
+                                isMine = isCurrentUser
+                            )
+                        }
                     }
 
                     // Video
@@ -731,21 +758,12 @@ private fun TelegramMessageBubble(
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
-                    // Photo
+                    // Photo: real photo bubble rendering
                     if (message.mediaType == "photo" && message.mediaUrl != null) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color.DarkGray,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(140.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { onViewImage(message.mediaUrl) }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Image, contentDescription = "Photo", tint = Color.White, modifier = Modifier.size(48.dp))
-                            }
-                        }
+                        TelegramPhotoBubble(
+                            imageUrl = message.mediaUrl,
+                            onClick = { onViewImage(message.mediaUrl) }
+                        )
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 

@@ -62,12 +62,12 @@ fun SpotlinCalendarDialog(
     val scheduleState = remember(lessons) {
         val map = mutableStateMapOf<String, MutableList<SchoolLesson>>()
         val defaultLessons = if (lessons.isNotEmpty()) lessons else listOf(
-            SchoolLesson(1, "Алгебра", "08:30 - 09:15", "Параграф 14, № 14.5, 14.8", "10-А"),
-            SchoolLesson(2, "Геометрия", "09:25 - 10:10", "Теорема о трех перпендикулярах", "10-А"),
-            SchoolLesson(3, "Физика", "10:30 - 11:15", "Доклад: Законы термодинамики", "10-А"),
-            SchoolLesson(4, "Русский язык", "11:35 - 12:20", "Упражнение 218", "10-А"),
-            SchoolLesson(5, "Литература", "12:35 - 13:20", "Война и мир (тома 1-2)", "10-А"),
-            SchoolLesson(6, "Информатика", "13:30 - 14:15", "Spotlin Android App", "10-А")
+            SchoolLesson(1, "Алгебра", "08:30 - 09:15", "Параграф 14, № 14.5, 14.8", ""),
+            SchoolLesson(2, "Геометрия", "09:25 - 10:10", "Теорема о трех перпендикулярах", ""),
+            SchoolLesson(3, "Физика", "10:30 - 11:15", "Доклад: Законы термодинамики", ""),
+            SchoolLesson(4, "Русский язык", "11:35 - 12:20", "Упражнение 218", ""),
+            SchoolLesson(5, "Литература", "12:35 - 13:20", "Война и мир (тома 1-2)", ""),
+            SchoolLesson(6, "Информатика", "13:30 - 14:15", "Spotlin Android App", "")
         )
 
         for (day in daysOfWeek) {
@@ -135,10 +135,12 @@ fun SpotlinCalendarDialog(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+                            val todayName = daysOfWeek[currentDayIndex]
                             Text(
-                                "Расписание уроков и домашнее задание",
+                                "Сегодня: $todayName • Расписание уроков",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
@@ -257,18 +259,20 @@ fun SpotlinCalendarDialog(
                                                         style = MaterialTheme.typography.titleMedium,
                                                         fontWeight = FontWeight.Bold
                                                     )
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Surface(
-                                                        shape = RoundedCornerShape(4.dp),
-                                                        color = MaterialTheme.colorScheme.secondaryContainer
-                                                    ) {
-                                                        Text(
-                                                            lesson.schoolClass,
-                                                            fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                        )
+                                                    if (lesson.schoolClass.isNotBlank()) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Surface(
+                                                            shape = RoundedCornerShape(4.dp),
+                                                            color = MaterialTheme.colorScheme.secondaryContainer
+                                                        ) {
+                                                            Text(
+                                                                lesson.schoolClass,
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                            )
+                                                        }
                                                     }
                                                 }
                                                 Text(

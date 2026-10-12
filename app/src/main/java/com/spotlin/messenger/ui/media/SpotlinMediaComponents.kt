@@ -11,6 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -61,48 +62,87 @@ fun TelegramVoiceMessagePlayer(
     val context = LocalContext.current
     var isPlaying by remember { mutableStateOf(false) }
     var currentPositionMs by remember { mutableIntStateOf(0) }
-    var totalDurationMs by remember { mutableIntStateOf((durationSec * 1000).toInt()) }
+    val initialDurationMs = remember(durationSec) {
+        if (durationSec > 0f) (durationSec * 1000).toInt() else 42000
+    }
+    var totalDurationMs by remember { mutableIntStateOf(initialDurationMs) }
     var isPrepared by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
+    var isSimulated by remember { mutableStateOf(false) }
 
-    val mediaPlayer = remember {
+    val mediaPlayer = remember(audioUrl) {
         MediaPlayer().apply {
             try {
-                if (audioUrl.startsWith("http")) {
+                if (audioUrl.startsWith("http://") || audioUrl.startsWith("https://")) {
                     setDataSource(audioUrl)
-                } else {
+                    setOnPreparedListener { mp ->
+                        totalDurationMs = if (mp.duration > 0) mp.duration else initialDurationMs
+                        isPrepared = true
+                    }
+                    setOnCompletionListener {
+                        isPlaying = false
+                        currentPositionMs = 0
+                    }
+                    prepareAsync()
+                } else if (audioUrl.startsWith("content://") || audioUrl.startsWith("file://")) {
                     setDataSource(context, Uri.parse(audioUrl))
-                }
-                setOnPreparedListener { mp ->
-                    totalDurationMs = mp.duration
+                    setOnPreparedListener { mp ->
+                        totalDurationMs = if (mp.duration > 0) mp.duration else initialDurationMs
+                        isPrepared = true
+                    }
+                    setOnCompletionListener {
+                        isPlaying = false
+                        currentPositionMs = 0
+                    }
+                    prepareAsync()
+                } else {
+                    // Local synthetic voice note (recorded or simulated)
+                    isSimulated = true
                     isPrepared = true
+                    totalDurationMs = initialDurationMs
                 }
-                setOnCompletionListener {
-                    isPlaying = false
-                    currentPositionMs = 0
-                }
-                prepareAsync()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                isSimulated = true
+                isPrepared = true
+                totalDurationMs = initialDurationMs
+            }
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(audioUrl) {
         onDispose {
             try {
-                mediaPlayer.stop()
+                if (mediaPlayer.isPlaying) {
+                    mediaPlayer.stop()
+                }
                 mediaPlayer.release()
             } catch (_: Exception) {}
         }
     }
 
-    LaunchedEffect(isPlaying) {
+    // Playback loop with real timer progression
+    LaunchedEffect(isPlaying, isSimulated) {
         while (isPlaying) {
-            try {
-                if (mediaPlayer.isPlaying) {
-                    currentPositionMs = mediaPlayer.currentPosition
+            if (isSimulated) {
+                delay(100)
+                val step = (100 * playbackSpeed).toInt()
+                if (currentPositionMs + step >= totalDurationMs) {
+                    currentPositionMs = 0
+                    isPlaying = false
+                } else {
+                    currentPositionMs += step
                 }
-            } catch (_: Exception) {}
-            delay(100)
+            } else {
+                try {
+                    if (mediaPlayer.isPlaying) {
+                        currentPositionMs = mediaPlayer.currentPosition
+                        if (mediaPlayer.duration > 0) {
+                            totalDurationMs = mediaPlayer.duration
+                        }
+                    }
+                } catch (_: Exception) {}
+                delay(100)
+            }
         }
     }
 
@@ -123,14 +163,16 @@ fun TelegramVoiceMessagePlayer(
                 .size(42.dp)
                 .clip(CircleShape)
                 .clickable {
-                    if (isPrepared) {
-                        if (isPlaying) {
-                            mediaPlayer.pause()
-                            isPlaying = false
-                        } else {
-                            mediaPlayer.start()
-                            isPlaying = true
+                    if (isPlaying) {
+                        if (!isSimulated) {
+                            try { mediaPlayer.pause() } catch (_: Exception) {}
                         }
+                        isPlaying = false
+                    } else {
+                        if (!isSimulated) {
+                            try { mediaPlayer.start() } catch (_: Exception) {}
+                        }
+                        isPlaying = true
                     }
                 }
         ) {
@@ -148,18 +190,21 @@ fun TelegramVoiceMessagePlayer(
 
         // Waveform bars and counter
         Column(modifier = Modifier.weight(1f)) {
-            // Simulated Telegram voice waveform bars
-            val progress = if (totalDurationMs > 0) currentPositionMs.toFloat() / totalDurationMs else 0f
+            val progress = if (totalDurationMs > 0) (currentPositionMs.toFloat() / totalDurationMs).coerceIn(0f, 1f) else 0f
             TelegramVoiceWaveform(
                 progress = progress,
                 activeColor = activeColor,
                 inactiveColor = inactiveColor,
+                onSeek = { seekFraction ->
+                    val targetMs = (seekFraction * totalDurationMs).toInt().coerceIn(0, totalDurationMs)
+                    currentPositionMs = targetMs
+                    if (!isSimulated) {
+                        try { mediaPlayer.seekTo(targetMs) } catch (_: Exception) {}
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(24.dp)
-                    .clickable {
-                        // Click anywhere on waveform to seek
-                    }
+                    .height(26.dp)
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -170,7 +215,7 @@ fun TelegramVoiceMessagePlayer(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Real timer
-                val displayMs = if (isPlaying) currentPositionMs else totalDurationMs
+                val displayMs = if (isPlaying || currentPositionMs > 0) currentPositionMs else totalDurationMs
                 Text(
                     text = formatTimer(displayMs),
                     fontSize = 12.sp,
@@ -185,7 +230,7 @@ fun TelegramVoiceMessagePlayer(
                     modifier = Modifier.clickable {
                         playbackSpeed = if (playbackSpeed == 1.0f) 2.0f else 1.0f
                         try {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                            if (!isSimulated && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                                 mediaPlayer.playbackParams = mediaPlayer.playbackParams.setSpeed(playbackSpeed)
                             }
                         } catch (_: Exception) {}
@@ -209,17 +254,25 @@ fun TelegramVoiceWaveform(
     progress: Float,
     activeColor: Color,
     inactiveColor: Color,
+    onSeek: (Float) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val barHeights = remember {
         listOf(
-            0.3f, 0.5f, 0.8f, 0.4f, 0.6f, 0.9f, 0.7f, 0.5f, 1.0f, 0.8f,
-            0.6f, 0.4f, 0.7f, 0.9f, 0.5f, 0.3f, 0.6f, 0.8f, 0.4f, 0.7f,
-            0.5f, 0.3f, 0.6f, 0.9f, 0.7f, 0.4f, 0.8f, 0.6f, 0.5f, 0.3f
+            0.35f, 0.55f, 0.85f, 0.45f, 0.65f, 0.95f, 0.75f, 0.5f, 1.0f, 0.8f,
+            0.6f, 0.4f, 0.75f, 0.9f, 0.55f, 0.35f, 0.65f, 0.85f, 0.45f, 0.75f,
+            0.5f, 0.35f, 0.65f, 0.95f, 0.7f, 0.45f, 0.85f, 0.6f, 0.5f, 0.35f
         )
     }
 
-    Canvas(modifier = modifier) {
+    Canvas(
+        modifier = modifier.pointerInput(Unit) {
+            detectTapGestures { offset ->
+                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                onSeek(fraction)
+            }
+        }
+    ) {
         val totalBars = barHeights.size
         val barWidth = 3.dp.toPx()
         val spacing = (size.width - (totalBars * barWidth)) / (totalBars - 1).coerceAtLeast(1)
@@ -240,6 +293,176 @@ fun TelegramVoiceWaveform(
                 strokeWidth = barWidth,
                 cap = StrokeCap.Round
             )
+        }
+    }
+}
+
+/**
+ * Authentic Telegram Music / Song Player for Audio files (with title, artist/performer, seek slider):
+ */
+@Composable
+fun TelegramMusicPlayer(
+    audioUrl: String,
+    title: String,
+    performer: String = "Неизвестный исполнитель",
+    durationSec: Float = 0f,
+    isMine: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var isPlaying by remember { mutableStateOf(false) }
+    var currentPositionMs by remember { mutableIntStateOf(0) }
+    val initialDurationMs = remember(durationSec) {
+        if (durationSec > 0f) (durationSec * 1000).toInt() else 180000
+    }
+    var totalDurationMs by remember { mutableIntStateOf(initialDurationMs) }
+    var isSimulated by remember { mutableStateOf(false) }
+
+    val mediaPlayer = remember(audioUrl) {
+        MediaPlayer().apply {
+            try {
+                if (audioUrl.startsWith("http://") || audioUrl.startsWith("https://")) {
+                    setDataSource(audioUrl)
+                    setOnPreparedListener { mp ->
+                        totalDurationMs = if (mp.duration > 0) mp.duration else initialDurationMs
+                    }
+                    setOnCompletionListener {
+                        isPlaying = false
+                        currentPositionMs = 0
+                    }
+                    prepareAsync()
+                } else if (audioUrl.startsWith("content://") || audioUrl.startsWith("file://")) {
+                    setDataSource(context, Uri.parse(audioUrl))
+                    setOnPreparedListener { mp ->
+                        totalDurationMs = if (mp.duration > 0) mp.duration else initialDurationMs
+                    }
+                    setOnCompletionListener {
+                        isPlaying = false
+                        currentPositionMs = 0
+                    }
+                    prepareAsync()
+                } else {
+                    isSimulated = true
+                    totalDurationMs = initialDurationMs
+                }
+            } catch (_: Exception) {
+                isSimulated = true
+                totalDurationMs = initialDurationMs
+            }
+        }
+    }
+
+    DisposableEffect(audioUrl) {
+        onDispose {
+            try {
+                if (mediaPlayer.isPlaying) mediaPlayer.stop()
+                mediaPlayer.release()
+            } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(isPlaying, isSimulated) {
+        while (isPlaying) {
+            if (isSimulated) {
+                delay(200)
+                if (currentPositionMs + 200 >= totalDurationMs) {
+                    currentPositionMs = 0
+                    isPlaying = false
+                } else {
+                    currentPositionMs += 200
+                }
+            } else {
+                try {
+                    if (mediaPlayer.isPlaying) {
+                        currentPositionMs = mediaPlayer.currentPosition
+                        if (mediaPlayer.duration > 0) totalDurationMs = mediaPlayer.duration
+                    }
+                } catch (_: Exception) {}
+                delay(200)
+            }
+        }
+    }
+
+    val activeColor = if (isMine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary
+    val progress = if (totalDurationMs > 0) (currentPositionMs.toFloat() / totalDurationMs).coerceIn(0f, 1f) else 0f
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp)
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = CircleShape,
+                    color = activeColor,
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .clickable {
+                            if (isPlaying) {
+                                if (!isSimulated) try { mediaPlayer.pause() } catch (_: Exception) {}
+                                isPlaying = false
+                            } else {
+                                if (!isSimulated) try { mediaPlayer.start() } catch (_: Exception) {}
+                                isPlaying = true
+                            }
+                        }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Пауза" else "Воспроизвести",
+                            tint = if (isMine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title.ifBlank { "Аудиозапись" },
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = performer.ifBlank { "Spotlin Audio" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Slider(
+                value = progress,
+                onValueChange = { newProgress ->
+                    val targetMs = (newProgress * totalDurationMs).toInt().coerceIn(0, totalDurationMs)
+                    currentPositionMs = targetMs
+                    if (!isSimulated) {
+                        try { mediaPlayer.seekTo(targetMs) } catch (_: Exception) {}
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(20.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = activeColor,
+                    activeTrackColor = activeColor,
+                    inactiveTrackColor = activeColor.copy(alpha = 0.25f)
+                )
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(formatTimer(currentPositionMs), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                Text(formatTimer(totalDurationMs), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+            }
         }
     }
 }
@@ -352,6 +575,87 @@ fun TelegramFileBubble(
                     contentDescription = "Скачать",
                     tint = MaterialTheme.colorScheme.primary
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Telegram Photo Bubble displaying the real photo preview
+ */
+@Composable
+fun TelegramPhotoBubble(
+    imageUrl: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var bitmap by remember(imageUrl) { mutableStateOf<Bitmap?>(null) }
+    var isLoading by remember(imageUrl) { mutableStateOf(true) }
+
+    LaunchedEffect(imageUrl) {
+        withContext(Dispatchers.IO) {
+            try {
+                if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
+                    val stream: InputStream = URL(imageUrl).openStream()
+                    bitmap = BitmapFactory.decodeStream(stream)
+                } else if (imageUrl.startsWith("content://") || imageUrl.startsWith("file://")) {
+                    val stream = context.contentResolver.openInputStream(Uri.parse(imageUrl))
+                    bitmap = BitmapFactory.decodeStream(stream)
+                    stream?.close()
+                }
+            } catch (_: Exception) {}
+            isLoading = false
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFF1E232A),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(180.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+    ) {
+        val currentBitmap = bitmap
+        if (currentBitmap != null) {
+            Image(
+                bitmap = currentBitmap.asImageBitmap(),
+                contentDescription = "Фотография",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else if (isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(32.dp),
+                    strokeWidth = 2.5.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF2B333E)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.Image,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(44.dp)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Фотография",
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
     }

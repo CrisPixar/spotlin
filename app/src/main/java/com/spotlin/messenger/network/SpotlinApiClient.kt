@@ -38,6 +38,7 @@ class SpotlinApiClient(
         .build()
 
     var authToken: String? = null
+    var currentUserId: String? = null
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     fun setServerUrl(url: String) {
@@ -73,6 +74,7 @@ class SpotlinApiClient(
             val userObj = obj.getJSONObject("user")
             authToken = token
             val user = parseUser(userObj)
+            currentUserId = user.id
             SpotlinLogger.i("SpotlinAuth", "Registration succeeded for user: ${user.username} (id: ${user.id})")
             Result.success(Pair(token, user))
         } catch (e: Exception) {
@@ -106,6 +108,7 @@ class SpotlinApiClient(
             val userObj = obj.getJSONObject("user")
             authToken = token
             val user = parseUser(userObj)
+            currentUserId = user.id
             SpotlinLogger.i("SpotlinAuth", "Login succeeded for user: ${user.username}")
             Result.success(Pair(token, user))
         } catch (e: Exception) {
@@ -380,7 +383,7 @@ class SpotlinApiClient(
                         senderBadge = item.optString("sender_badge", ""),
                         senderIsCreator = item.optInt("sender_is_creator", 0) == 1,
                         text = item.optString("ciphertext", ""),
-                        isMine = item.optString("sender_id") == authToken,
+                        isMine = (currentUserId != null && item.optString("sender_id") == currentUserId),
                         isPinned = item.optInt("is_pinned", 0) == 1,
                         isEdited = item.optInt("is_edited", 0) == 1,
                         isRead = item.optInt("is_read", 0) == 1,
